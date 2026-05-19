@@ -5,6 +5,7 @@ import { ProjectRegistry } from './services/projectRegistry';
 import { SessionRegistry } from './services/sessionRegistry';
 import { StreamJsonClaudeEventSource } from './services/claudeEventSource';
 import { RealtimeHub } from './services/realtimeHub';
+import { StatuslineService } from './services/statuslineService';
 import { ClaudeResumeIndex } from './services/claudeResumeIndex';
 import { ClaudeTranscriptNormalizer } from './services/claudeTranscriptNormalizer';
 
@@ -14,7 +15,8 @@ const projects = new ProjectRegistry(db);
 const sessions = new SessionRegistry(db);
 sessions.stopRunningSessions();
 const runner = new StreamJsonClaudeEventSource({ claudeBin: config.claudeBin });
-const hub = new RealtimeHub(sessions, runner);
+const statuslines = new StatuslineService();
+const hub = new RealtimeHub(sessions, runner, { projects, statuslines });
 const resumeIndex = new ClaudeResumeIndex(config.claudeConfigDir);
 const transcripts = new ClaudeTranscriptNormalizer(config.claudeConfigDir);
 

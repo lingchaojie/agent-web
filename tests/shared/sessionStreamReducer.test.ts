@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { applySessionStreamEvent, emptySessionStreamState } from '../../src/shared/sessionStream';
-import type { ConversationBlock, SessionStreamEvent, SessionViewState } from '../../src/shared/types';
+import type { ConversationBlock, SessionStatuslineState, SessionStreamEvent, SessionViewState } from '../../src/shared/types';
 
 describe('session stream reducer', () => {
   it('applies a snapshot as the authoritative session view', () => {
@@ -176,6 +176,76 @@ describe('session stream reducer', () => {
     expect(updated.session?.claudeSessionId).toBe('native-session-1');
     expect(duplicate).toEqual(updated);
   });
+
+  it('stores statusline state from snapshots and ordered updates without transcript blocks', () => {
+    const firstStatusline = statusline({ text: '[36mOpus 4.7[0m', sequence: 1 });
+    let state = applySessionStreamEvent(emptySessionStreamState(), {
+      type: 'snapshot',
+      sessionId: 'session-1',
+      sequence: 1,
+      session: sessionView({ latestSequence: 1 }),
+      blocks: [],
+      statusline: firstStatusline,
+    });
+
+    expect(state.statusline).toEqual(firstStatusline);
+    expect(state.blocks).toEqual([]);
+
+    const nextStatusline = statusline({ text: '[32mGPT Usage[0m', sequence: 2 });
+    state = applySessionStreamEvent(state, {
+      type: 'statusline-changed',
+      sessionId: 'session-1',
+      sequence: 2,
+      statusline: nextStatusline,
+    });
+
+    expect(state.statusline).toEqual(nextStatusline);
+    expect(state.blocks).toEqual([]);
+    expect(state.latestSequence).toBe(2);
+  });
+
+  it('ignores duplicate and older statusline updates', () => {
+    const initialStatusline = statusline({ text: 'fresh', sequence: 3 });
+    const initial = applySessionStreamEvent(emptySessionStreamState(), {
+      type: 'snapshot',
+      sessionId: 'session-1',
+      sequence: 3,
+      session: sessionView({ latestSequence: 3 }),
+      blocks: [],
+      statusline: initialStatusline,
+    });
+
+    const updated = applySessionStreamEvent(initial, {
+      type: 'statusline-changed',
+      sessionId: 'session-1',
+      sequence: 2,
+      statusline: statusline({ text: 'stale', sequence: 2 }),
+    });
+
+    expect(updated).toEqual(initial);
+  });
+
+  it('replaces statusline state when a different session snapshot arrives', () => {
+    const sessionOne = applySessionStreamEvent(emptySessionStreamState(), {
+      type: 'snapshot',
+      sessionId: 'session-1',
+      sequence: 1,
+      session: sessionView({ sessionId: 'session-1', latestSequence: 1 }),
+      blocks: [],
+      statusline: statusline({ sessionId: 'session-1', text: 'session one', sequence: 1 }),
+    });
+
+    const sessionTwo = applySessionStreamEvent(sessionOne, {
+      type: 'snapshot',
+      sessionId: 'session-2',
+      sequence: 1,
+      session: sessionView({ sessionId: 'session-2', latestSequence: 1 }),
+      blocks: [],
+    });
+
+    expect(sessionTwo.session?.sessionId).toBe('session-2');
+    expect(sessionTwo.statusline).toBeUndefined();
+  });
 });
 
 function sessionView(overrides: Partial<SessionViewState> = {}): SessionViewState {
@@ -206,6 +276,17 @@ function block(overrides: Partial<ConversationBlock> = {}): ConversationBlock {
     createdAt: '2026-01-01T00:00:00.000Z',
     updatedAt: '2026-01-01T00:00:00.000Z',
     source: 'live',
+    ...overrides,
+  };
+}
+
+function statusline(overrides: Partial<SessionStatuslineState> = {}): SessionStatuslineState {
+  return {
+    sessionId: 'session-1',
+    status: 'ready',
+    text: '',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+    sequence: 1,
     ...overrides,
   };
 }

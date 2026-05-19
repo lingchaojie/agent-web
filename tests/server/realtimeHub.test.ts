@@ -1,7 +1,13 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createDatabase } from '../../src/server/db';
 import { RealtimeHub } from '../../src/server/services/realtimeHub';
 import { SessionRegistry } from '../../src/server/services/sessionRegistry';
+import { historyProjectId } from '../../src/server/services/projectDiscovery';
+import type { Project, SessionStatuslineState } from '../../src/shared/types';
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 describe('RealtimeHub', () => {
   it('sends a snapshot when a client subscribes', () => {
@@ -190,6 +196,147 @@ describe('RealtimeHub', () => {
     expect(() => hub.sendAction(session.id, 'choice-3')).toThrow('Action not found');
     expect(runner.sendInput).not.toHaveBeenCalled();
   });
+
+  it('includes the latest statusline state in session snapshots', async () => {
+    const sessions = new SessionRegistry(createDatabase(':memory:'));
+    const session = sessions.createSession({ projectId: 'project-1', source: 'web-created', claudeSessionId: null, title: 'Demo' });
+    const statuslines = fakeStatuslines({ refreshIntervalSeconds: 10 });
+    statuslines.render.mockResolvedValue(statusline({ sessionId: session.id, text: 'first status', sequence: 1 }));
+    const hub = new RealtimeHub(sessions, fakeRunner(), { projects: fakeProjects(), statuslines });
+    const sent: unknown[] = [];
+
+    await hub.refreshStatusline(session.id);
+    hub.subscribe({ sessionId: session.id }, (message) => sent.push(message));
+
+    expect(sent[0]).toMatchObject({
+      type: 'snapshot',
+      statusline: expect.objectContaining({ sessionId: session.id, text: 'first status' }),
+    });
+  });
+
+  it('refreshes subscribed statuslines on the configured interval', async () => {
+    vi.useFakeTimers();
+    const sessions = new SessionRegistry(createDatabase(':memory:'));
+    const session = sessions.createSession({ projectId: 'project-1', source: 'web-created', claudeSessionId: null, title: 'Demo' });
+    const statuslines = fakeStatuslines({ refreshIntervalSeconds: 2 });
+    statuslines.render
+      .mockResolvedValueOnce(statusline({ sessionId: session.id, text: 'initial', sequence: 1 }))
+      .mockResolvedValueOnce(statusline({ sessionId: session.id, text: 'refreshed', sequence: 2 }));
+    const hub = new RealtimeHub(sessions, fakeRunner(), { projects: fakeProjects(), statuslines });
+    const sent: unknown[] = [];
+
+    hub.subscribe({ sessionId: session.id }, (message) => sent.push(message));
+    await vi.runOnlyPendingTimersAsync();
+    await vi.advanceTimersByTimeAsync(2_000);
+
+    expect(statuslines.render).toHaveBeenCalledTimes(2);
+    expect(lastMessage(sent, 'statusline-changed')).toMatchObject({
+      type: 'statusline-changed',
+      sessionId: session.id,
+      statusline: expect.objectContaining({ text: 'refreshed' }),
+    });
+    expect(sessions.getSnapshot(session.id).blocks).toEqual([]);
+  });
+
+  it('shares one statusline refresh loop across multiple clients for the same session', async () => {
+    vi.useFakeTimers();
+    const sessions = new SessionRegistry(createDatabase(':memory:'));
+    const session = sessions.createSession({ projectId: 'project-1', source: 'web-created', claudeSessionId: null, title: 'Demo' });
+    const statuslines = fakeStatuslines({ refreshIntervalSeconds: 5 });
+    statuslines.render.mockResolvedValue(statusline({ sessionId: session.id, text: 'shared', sequence: 1 }));
+    const hub = new RealtimeHub(sessions, fakeRunner(), { projects: fakeProjects(), statuslines });
+    const first: unknown[] = [];
+    const second: unknown[] = [];
+
+    hub.subscribe({ sessionId: session.id }, (message) => first.push(message));
+    hub.subscribe({ sessionId: session.id }, (message) => second.push(message));
+    await vi.runOnlyPendingTimersAsync();
+
+    expect(statuslines.render).toHaveBeenCalledTimes(1);
+    expect(lastMessage(first, 'statusline-changed')).toMatchObject({ statusline: expect.objectContaining({ text: 'shared' }) });
+    expect(lastMessage(second, 'statusline-changed')).toMatchObject({ statusline: expect.objectContaining({ text: 'shared' }) });
+  });
+
+  it('keeps statusline updates isolated by session', async () => {
+    const sessions = new SessionRegistry(createDatabase(':memory:'));
+    const firstSession = sessions.createSession({ projectId: 'project-1', source: 'web-created', claudeSessionId: null, title: 'One' });
+    const secondSession = sessions.createSession({ projectId: 'project-2', source: 'web-created', claudeSessionId: null, title: 'Two' });
+    const statuslines = fakeStatuslines({ refreshIntervalSeconds: 10 });
+    statuslines.render.mockImplementation(async ({ session, sequence }) => statusline({ sessionId: session.id, text: `${session.title} status`, sequence }));
+    const hub = new RealtimeHub(sessions, fakeRunner(), { projects: fakeProjects(), statuslines });
+    const first: unknown[] = [];
+    const second: unknown[] = [];
+    hub.subscribe({ sessionId: firstSession.id }, (message) => first.push(message));
+    hub.subscribe({ sessionId: secondSession.id }, (message) => second.push(message));
+
+    await hub.refreshStatusline(firstSession.id);
+    await hub.refreshStatusline(secondSession.id);
+
+    expect(lastMessage(first, 'statusline-changed')).toMatchObject({ sessionId: firstSession.id, statusline: expect.objectContaining({ text: 'One status' }) });
+    expect(lastMessage(second, 'statusline-changed')).toMatchObject({ sessionId: secondSession.id, statusline: expect.objectContaining({ text: 'Two status' }) });
+  });
+
+  it('resolves discovered history project ids when refreshing statuslines', async () => {
+    const projectPath = process.cwd();
+    const sessions = new SessionRegistry(createDatabase(':memory:'));
+    const session = sessions.createSession({ projectId: historyProjectId(projectPath), source: 'web-created', claudeSessionId: null, title: 'History project session' });
+    const statuslines = fakeStatuslines({ refreshIntervalSeconds: 10 });
+    statuslines.render.mockResolvedValue(statusline({ sessionId: session.id, text: 'history status', sequence: 1 }));
+    const hub = new RealtimeHub(sessions, fakeRunner(), { projects: fakeProjects([]), statuslines });
+    const sent: unknown[] = [];
+    hub.subscribe({ sessionId: session.id }, (message) => sent.push(message));
+
+    await hub.refreshStatusline(session.id);
+
+    expect(statuslines.render).toHaveBeenCalledWith(expect.objectContaining({
+      project: expect.objectContaining({ id: historyProjectId(projectPath), path: projectPath, source: 'history' }),
+    }));
+    expect(lastMessage(sent, 'statusline-changed')).toMatchObject({ statusline: expect.objectContaining({ text: 'history status' }) });
+  });
+
+  it('stops the statusline refresh loop after the last client detaches', async () => {
+    vi.useFakeTimers();
+    const sessions = new SessionRegistry(createDatabase(':memory:'));
+    const session = sessions.createSession({ projectId: 'project-1', source: 'web-created', claudeSessionId: null, title: 'Demo' });
+    const statuslines = fakeStatuslines({ refreshIntervalSeconds: 1 });
+    statuslines.render.mockResolvedValue(statusline({ sessionId: session.id, text: 'status', sequence: 1 }));
+    const hub = new RealtimeHub(sessions, fakeRunner(), { projects: fakeProjects(), statuslines });
+
+    const detach = hub.subscribe({ sessionId: session.id }, vi.fn());
+    detach();
+    await vi.advanceTimersByTimeAsync(3_000);
+
+    expect(statuslines.render).not.toHaveBeenCalled();
+    expect((hub as any).statuslineTimers.has(session.id)).toBe(false);
+  });
+
+  it('assigns statusline sequences after async rendering so concurrent events are not overwritten', async () => {
+    let resolveStatusline: (state: SessionStatuslineState) => void = () => undefined;
+    const sessions = new SessionRegistry(createDatabase(':memory:'));
+    const session = sessions.createSession({ projectId: 'project-1', source: 'web-created', claudeSessionId: null, title: 'Demo' });
+    const statuslines = fakeStatuslines({ refreshIntervalSeconds: 10 });
+    statuslines.render.mockReturnValue(new Promise((resolve) => { resolveStatusline = resolve; }));
+    const hub = new RealtimeHub(sessions, fakeRunner(), { projects: fakeProjects(), statuslines });
+
+    const refresh = hub.refreshStatusline(session.id);
+    hub.handleOutput(session.id, 'concurrent assistant message');
+    resolveStatusline(statusline({ sessionId: session.id, text: 'late statusline', sequence: 1 }));
+    await refresh;
+
+    const replayed = sessions.getEventsAfter(session.id, 0);
+    const statuslineEvent = replayed.find((event) => event.type === 'statusline-changed');
+    if (!statuslineEvent || statuslineEvent.type !== 'statusline-changed') throw new Error('Missing statusline event');
+    expect(replayed.map((event) => event.type)).toContain('block-added');
+    expect(statuslineEvent).toMatchObject({
+      type: 'statusline-changed',
+      statusline: expect.objectContaining({ text: 'late statusline' }),
+    });
+    const replayedSequences = replayed.flatMap((event) => ('sequence' in event && typeof event.sequence === 'number' ? [event.sequence] : []));
+    const otherSequences = replayed.flatMap((event) => (event.type !== 'statusline-changed' && 'sequence' in event && typeof event.sequence === 'number' ? [event.sequence] : []));
+    expect(new Set(replayedSequences)).toHaveProperty('size', replayedSequences.length);
+    expect(statuslineEvent.sequence).toBe(statuslineEvent.statusline.sequence);
+    expect(statuslineEvent.sequence).toBeGreaterThan(Math.max(...otherSequences));
+  });
 });
 
 function lastMessage(messages: unknown[], type: string) {
@@ -199,5 +346,45 @@ function lastMessage(messages: unknown[], type: string) {
 function fakeRunner() {
   return {
     sendInput: vi.fn(),
+  };
+}
+
+function fakeProjects(projects: Project[] = []) {
+  const defaults = [project({ id: 'project-1', name: 'One', path: '/tmp/project-one' }), project({ id: 'project-2', name: 'Two', path: '/tmp/project-two' })];
+  const all = projects.length ? projects : defaults;
+  return {
+    getProject: vi.fn((id: string) => all.find((item) => item.id === id) ?? null),
+  };
+}
+
+function fakeStatuslines(settings: { refreshIntervalSeconds: number }) {
+  return {
+    settings: vi.fn(() => ({ command: 'node statusline.js', padding: 0, refreshIntervalSeconds: settings.refreshIntervalSeconds })),
+    render: vi.fn(),
+  };
+}
+
+function project(overrides: Partial<Project> = {}): Project {
+  return {
+    id: 'project-1',
+    name: 'Project',
+    path: '/tmp/project',
+    favorite: false,
+    available: true,
+    source: 'whitelist',
+    createdAt: '2026-05-19T00:00:00.000Z',
+    updatedAt: '2026-05-19T00:00:00.000Z',
+    ...overrides,
+  };
+}
+
+function statusline(overrides: Partial<SessionStatuslineState> = {}): SessionStatuslineState {
+  return {
+    sessionId: 'session-1',
+    status: 'ready',
+    text: 'status',
+    updatedAt: '2026-05-19T10:00:00.000Z',
+    sequence: 1,
+    ...overrides,
   };
 }

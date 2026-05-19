@@ -1,15 +1,28 @@
-import type { ConversationBlock, ConversationBlockSource, PromptAction, SessionActivity, SessionLifecycle, SessionRenderState, SessionStreamEvent, WsServerMessage } from '../../shared/types';
+import type { ConversationBlock, ConversationBlockSource, Project, PromptAction, SessionActivity, SessionLifecycle, SessionRenderState, SessionStatuslineState, SessionStreamEvent, WsServerMessage } from '../../shared/types';
 import type { SessionRegistry } from './sessionRegistry';
+import type { StatuslineService } from './statuslineService';
 import type { ClaudeSemanticEvent } from './claudeEventSource';
 import { applyClaudeEventToRenderState, emptySessionRenderState } from '../../shared/sessionRender';
 import { mapClaudeEventToSemantic } from './claudeSemanticMapper';
 import { parseInteraction } from './interactionParser';
 import { classifyTerminalStreamFrame } from './terminalText';
+import { isAvailableProjectPath, projectPathFromHistoryId } from './projectDiscovery';
 
 type SendFn = (message: WsServerMessage) => void;
 
 type InputRunner = {
   sendInput(sessionId: string, text: string): void;
+};
+
+type ProjectLookup = {
+  getProject(id: string): Project | null;
+};
+
+type StatuslineRuntime = Pick<StatuslineService, 'settings' | 'render'>;
+
+type RealtimeHubOptions = {
+  projects?: ProjectLookup;
+  statuslines?: StatuslineRuntime;
 };
 
 export class RealtimeHub {
@@ -23,8 +36,10 @@ export class RealtimeHub {
   private readonly queuedEvents = new Map<string, ClaudeSemanticEvent[]>();
   private readonly transcriptSources = new Map<string, ConversationBlockSource>();
   private readonly renderStates = new Map<string, SessionRenderState>();
+  private readonly statuslines = new Map<string, SessionStatuslineState>();
+  private readonly statuslineTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
-  constructor(private readonly sessions: SessionRegistry, private readonly runner: InputRunner) {}
+  constructor(private readonly sessions: SessionRegistry, private readonly runner: InputRunner, private readonly options: RealtimeHubOptions = {}) {}
 
   subscribe(input: { sessionId: string; afterSequence?: number }, send: SendFn): () => void {
     const session = this.sessions.getSession(input.sessionId);
@@ -39,7 +54,11 @@ export class RealtimeHub {
       const events = this.sessions.getEventsAfter(input.sessionId, afterSequence);
       if (events.length > 0 && events[0].sequence === afterSequence + 1) {
         for (const event of events) send(event);
-        return detach;
+        this.ensureStatuslineRefresh(input.sessionId);
+        return () => {
+          detach();
+          this.stopStatuslineRefreshIfIdle(input.sessionId);
+        };
       }
     }
 
@@ -51,8 +70,13 @@ export class RealtimeHub {
       session: snapshot.session,
       blocks: snapshot.blocks,
       render: this.renderStates.get(input.sessionId),
+      statusline: this.statuslines.get(input.sessionId),
     });
-    return detach;
+    this.ensureStatuslineRefresh(input.sessionId);
+    return () => {
+      detach();
+      this.stopStatuslineRefreshIfIdle(input.sessionId);
+    };
   }
 
   handleOutput(sessionId: string, text: string): void {
@@ -90,6 +114,28 @@ export class RealtimeHub {
     } else {
       this.broadcastWaitingForInput(sessionId, interaction);
     }
+  }
+
+  async refreshStatusline(sessionId: string): Promise<void> {
+    const statuslineService = this.options.statuslines;
+    const projectLookup = this.options.projects;
+    if (!statuslineService || !projectLookup) return;
+    const session = this.sessions.getSession(sessionId);
+    if (!session) return;
+    const project = this.resolveProject(session.projectId, projectLookup);
+    if (!project) return;
+    const snapshot = this.sessions.getSnapshot(sessionId);
+    const rendered = await statuslineService.render({
+      session,
+      project,
+      view: snapshot.session,
+      render: this.renderStates.get(sessionId),
+      sequence: snapshot.latestSequence + 1,
+    });
+    const sequence = this.nextEventSequence(sessionId);
+    const statusline = { ...rendered, sequence };
+    this.statuslines.set(sessionId, statusline);
+    this.broadcastStreamEvent({ type: 'statusline-changed', sessionId, sequence, statusline });
   }
 
   sendInput(sessionId: string, text: string): void {
@@ -290,6 +336,25 @@ export class RealtimeHub {
     this.broadcastStreamEvent({ type: 'session-changed', sessionId, sequence: this.nextEventSequence(sessionId), patch });
   }
 
+  private resolveProject(projectId: string, projectLookup: ProjectLookup): Project | null {
+    const registered = projectLookup.getProject(projectId);
+    if (registered) return registered;
+
+    const historyPath = projectPathFromHistoryId(projectId);
+    if (!historyPath || !isAvailableProjectPath(historyPath)) return null;
+    const now = new Date().toISOString();
+    return {
+      id: projectId,
+      name: historyPath.split('/').filter(Boolean).at(-1) ?? historyPath,
+      path: historyPath,
+      favorite: false,
+      available: true,
+      source: 'history',
+      createdAt: now,
+      updatedAt: now,
+    };
+  }
+
   private addClient(sessionId: string, send: SendFn): () => void {
     const clients = this.clients.get(sessionId) ?? new Set<SendFn>();
     clients.add(send);
@@ -299,6 +364,31 @@ export class RealtimeHub {
       clients.delete(send);
       if (clients.size === 0) this.clients.delete(sessionId);
     };
+  }
+
+  private ensureStatuslineRefresh(sessionId: string): void {
+    const statuslineService = this.options.statuslines;
+    if (!statuslineService || !this.options.projects || this.statuslineTimers.has(sessionId)) return;
+
+    const run = () => {
+      void this.refreshStatusline(sessionId).finally(() => {
+        if (!this.clients.has(sessionId)) {
+          this.stopStatuslineRefreshIfIdle(sessionId);
+          return;
+        }
+        const intervalMs = statuslineService.settings().refreshIntervalSeconds * 1000;
+        this.statuslineTimers.set(sessionId, setTimeout(run, intervalMs));
+      });
+    };
+
+    this.statuslineTimers.set(sessionId, setTimeout(run, 0));
+  }
+
+  private stopStatuslineRefreshIfIdle(sessionId: string): void {
+    if (this.clients.has(sessionId)) return;
+    const timer = this.statuslineTimers.get(sessionId);
+    if (timer) clearTimeout(timer);
+    this.statuslineTimers.delete(sessionId);
   }
 
   private broadcastStreamEvent(event: SessionStreamEvent): void {

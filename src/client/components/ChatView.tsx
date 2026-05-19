@@ -6,6 +6,7 @@ import MessageStream from './MessageStream';
 import PromptActions from './PromptActions';
 import SessionRenderSurface from './SessionRenderSurface';
 import ChatComposer from './ChatComposer';
+import SessionStatusline from './SessionStatusline';
 
 type ChatViewProps = {
   session: ClaudeSession | null;
@@ -174,6 +175,8 @@ export default function ChatView({ session, commandEntries = [], resumeCandidate
         </>
       )}
 
+      <SessionStatusline statusline={streamState.statusline} />
+
       <ChatComposer
         value={input}
         disabled={connectionState !== 'connected'}
@@ -213,7 +216,7 @@ function parseServerMessage(raw: unknown): WsServerMessage | null {
 }
 
 function isSessionStreamEvent(message: WsServerMessage): message is SessionStreamEvent {
-  return message.type === 'snapshot' || message.type === 'block-added' || message.type === 'block-updated' || message.type === 'block-finalized' || message.type === 'activity-changed' || message.type === 'session-changed' || message.type === 'render-changed';
+  return message.type === 'snapshot' || message.type === 'block-added' || message.type === 'block-updated' || message.type === 'block-finalized' || message.type === 'activity-changed' || message.type === 'session-changed' || message.type === 'render-changed' || message.type === 'statusline-changed';
 }
 
 function streamEventSequence(event: SessionStreamEvent): number {
@@ -268,4 +271,3 @@ function statusFromLifecycle(lifecycle: SessionViewState['lifecycle']): SessionS
   if (lifecycle === 'running' || lifecycle === 'stopped' || lifecycle === 'failed') return lifecycle;
   return null;
 }
-
