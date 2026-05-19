@@ -119,7 +119,8 @@ describe('backend routes', () => {
       title: 'New session',
     });
     expect(context.runner.start).toHaveBeenCalledWith({ sessionId: session.id, cwd: project.path, mode: 'new' });
-    expect(context.runner.onData).toHaveBeenCalledWith(session.id, expect.any(Function));
+    expect(context.runner.onEvent).toHaveBeenCalledWith(session.id, expect.any(Function));
+    expect(context.runner.onFallbackOutput).toHaveBeenCalledWith(session.id, expect.any(Function));
     expect(context.runner.onExit).toHaveBeenCalledWith(session.id, expect.any(Function));
     expect(context.hub.broadcastStatus).toHaveBeenCalledWith(session.id, 'running');
 
@@ -202,6 +203,29 @@ describe('backend routes', () => {
     await app.close();
   });
 
+  it('keeps sessions running when a structured print-mode turn exits successfully', async () => {
+    const project = fakeProject({ id: 'project-1', path: root, available: true });
+    const session = fakeSession({ id: 'session-1', projectId: project.id, title: 'New session' });
+    const context = fakeContext();
+    context.projects.getProject = vi.fn(() => project);
+    context.sessions.createSession = vi.fn(() => session);
+    const app = await createApp(context);
+
+    await app.inject({
+      method: 'POST',
+      url: '/api/sessions',
+      headers: authHeaders(),
+      payload: { projectId: project.id, mode: 'new' },
+    });
+    const onExit = vi.mocked(context.runner.onExit).mock.calls[0]?.[1];
+    onExit?.({ exitCode: 0 });
+
+    expect(context.hub.broadcastStatus).not.toHaveBeenCalledWith(session.id, 'stopped');
+    expect(context.hub.broadcastStatus).not.toHaveBeenCalledWith(session.id, 'failed');
+
+    await app.close();
+  });
+
   it('returns Claude history only for available whitelisted projects', async () => {
     const projectsRoot = join(root, 'projects');
     const allowedProjectRoot = join(projectsRoot, '-tmp-demo');
@@ -224,6 +248,31 @@ describe('backend routes', () => {
         sessionId: 'claude-session',
         title: 'Demo history',
         projectPath: root,
+      }),
+    ]);
+
+    await app.close();
+  });
+
+  it('annotates history entries that already have matching app sessions', async () => {
+    const projectsRoot = join(root, 'projects');
+    const projectRoot = join(projectsRoot, '-tmp-demo');
+    mkdirSync(projectRoot, { recursive: true });
+    writeFileSync(join(projectRoot, 'claude-session.jsonl'), historyLine({ summary: 'Demo history', cwd: root }));
+    const existing = fakeSession({ id: 'session-existing', projectId: 'project-1', claudeSessionId: 'claude-session', status: 'running' });
+    const context = fakeContext({ claudeConfigDir: root });
+    context.projects.listProjects = vi.fn(() => [fakeProject({ id: 'project-1', path: root, available: true })]);
+    context.sessions.findByClaudeSessionId = vi.fn(() => existing);
+    const app = await createApp(context);
+
+    const response = await app.inject({ method: 'GET', url: '/api/history', headers: authHeaders() });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual([
+      expect.objectContaining({
+        sessionId: 'claude-session',
+        appSessionId: 'session-existing',
+        appSession: expect.objectContaining({ id: 'session-existing', claudeSessionId: 'claude-session' }),
       }),
     ]);
 
@@ -266,6 +315,13 @@ describe('backend routes', () => {
         expect.objectContaining({ kind: 'user', text: 'Restore this', sequence: 1 }),
         expect.objectContaining({ kind: 'assistant', text: 'Restored response', sequence: 2 }),
       ],
+      render: expect.objectContaining({
+        regions: [
+          expect.objectContaining({ kind: 'user', text: 'Restore this', source: 'history' }),
+          expect.objectContaining({ kind: 'assistant', text: 'Restored response', source: 'history' }),
+        ],
+        activeRegion: null,
+      }),
     });
 
     await app.close();
@@ -493,6 +549,38 @@ describe('backend routes', () => {
     await app.close();
   });
 
+  it('returns existing app sessions instead of duplicating matching history resumes', async () => {
+    const projectsRoot = join(root, 'projects');
+    const historyProjectRoot = join(projectsRoot, '-tmp-history-demo');
+    const discoveredProjectPath = join(root, 'history-demo');
+    mkdirSync(historyProjectRoot, { recursive: true });
+    mkdirSync(discoveredProjectPath, { recursive: true });
+    writeFileSync(join(historyProjectRoot, 'history-session.jsonl'), historyLine({ summary: 'History demo', cwd: discoveredProjectPath }));
+    const projectId = `history:${Buffer.from(discoveredProjectPath).toString('base64url')}`;
+    const existing = fakeSession({ id: 'session-existing', projectId, source: 'web-created', claudeSessionId: 'history-session', title: 'New session', status: 'running' });
+    const context = fakeContext({ claudeConfigDir: root });
+    context.projects.getProject = vi.fn(() => null);
+    context.projects.listProjects = vi.fn(() => []);
+    context.sessions.findByClaudeSessionId = vi.fn(() => existing);
+    context.sessions.getSession = vi.fn(() => existing);
+    const app = await createApp(context);
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/sessions/resume',
+      headers: authHeaders(),
+      payload: { projectId, claudeSessionId: 'history-session', title: 'History demo' },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual(expect.objectContaining({ id: existing.id, claudeSessionId: 'history-session' }));
+    expect(context.sessions.createSession).not.toHaveBeenCalled();
+    expect(context.sessions.appendBlock).not.toHaveBeenCalled();
+    expect(context.runner.start).not.toHaveBeenCalled();
+
+    await app.close();
+  });
+
   it('allows websocket stream subscriptions with a protocol token', async () => {
     const context = fakeContext();
     let wsSend: ((message: WsServerMessage) => void) | null = null;
@@ -662,12 +750,14 @@ function fakeContext(overrides: Partial<RouteContext['config']> = {}): RouteCont
       listRunningSessions: vi.fn(() => []),
       createSession: vi.fn(),
       getSession: vi.fn(),
+      findByClaudeSessionId: vi.fn(() => null),
       appendBlock: vi.fn(),
       updateStatus: vi.fn(),
     } as unknown as RouteContext['sessions'],
     runner: {
       start: vi.fn(),
-      onData: vi.fn(),
+      onEvent: vi.fn(),
+      onFallbackOutput: vi.fn(),
       onExit: vi.fn(),
       sendInput: vi.fn(),
       stop: vi.fn(),

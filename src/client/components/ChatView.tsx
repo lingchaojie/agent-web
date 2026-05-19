@@ -4,6 +4,7 @@ import { applySessionStreamEvent, emptySessionStreamState } from '../../shared/s
 import { openSessionSocket, sendWs } from '../api';
 import MessageStream from './MessageStream';
 import PromptActions from './PromptActions';
+import SessionRenderSurface from './SessionRenderSurface';
 
 type ChatViewProps = {
   session: ClaudeSession | null;
@@ -149,6 +150,7 @@ export default function ChatView({ session, onStatusChange, onBackToSessions, on
         </div>
         <div className="chat-status-actions">
           <span className={`activity-chip ${lifecycle === 'failed' ? 'failed' : activity}`} data-status-transition={prefersReducedMotion() ? 'reduced' : 'animated'}>{activityLabel(activity, lifecycle)}</span>
+          <span className={`source-chip ${streamState.session?.transcriptSource === 'pty-fallback' ? 'degraded' : 'structured'}`}>{sourceLabel(streamState.session?.transcriptSource)}</span>
           <span className={`connection-chip ${connectionState}`}>{connectionState}</span>
           <button className="secondary-button compact danger-button" type="button" onClick={() => onStop(session)} disabled={session.status !== 'running'}>
             停止
@@ -158,9 +160,15 @@ export default function ChatView({ session, onStatusChange, onBackToSessions, on
 
       {visibleError ? <div className="error-banner">{visibleError}</div> : null}
 
-      <MessageStream blocks={streamState.blocks} />
-      {activity === 'working' ? <div className="live-activity" role="status">Claude 正在处理…</div> : null}
-      <PromptActions interaction={interaction} disabled={connectionState !== 'connected'} onAction={handleAction} />
+      {streamState.render ? (
+        <SessionRenderSurface render={streamState.render} disabled={connectionState !== 'connected'} onAction={handleAction} />
+      ) : (
+        <>
+          <MessageStream blocks={streamState.blocks} />
+          {activity === 'working' ? <div className="live-activity" role="status">Claude 正在处理…</div> : null}
+          <PromptActions interaction={interaction} disabled={connectionState !== 'connected'} onAction={handleAction} />
+        </>
+      )}
 
       <form className="composer" onSubmit={handleSubmit}>
         <textarea
@@ -180,9 +188,14 @@ export default function ChatView({ session, onStatusChange, onBackToSessions, on
 
 function activityLabel(activity: SessionActivity, lifecycle: SessionViewState['lifecycle'] | null): string {
   if (lifecycle === 'failed') return '失败';
+  if (lifecycle === 'degraded-fallback') return '降级模式';
   if (activity === 'working') return '工作中';
   if (activity === 'idle') return '等待输入';
   return '已停止';
+}
+
+function sourceLabel(source: SessionViewState['transcriptSource'] | undefined): string {
+  return source === 'pty-fallback' ? 'PTY fallback' : 'structured';
 }
 
 function prefersReducedMotion(): boolean {
@@ -199,7 +212,7 @@ function parseServerMessage(raw: unknown): WsServerMessage | null {
 }
 
 function isSessionStreamEvent(message: WsServerMessage): message is SessionStreamEvent {
-  return message.type === 'snapshot' || message.type === 'block-added' || message.type === 'block-updated' || message.type === 'block-finalized' || message.type === 'activity-changed' || message.type === 'session-changed';
+  return message.type === 'snapshot' || message.type === 'block-added' || message.type === 'block-updated' || message.type === 'block-finalized' || message.type === 'activity-changed' || message.type === 'session-changed' || message.type === 'render-changed';
 }
 
 function streamEventSequence(event: SessionStreamEvent): number {

@@ -1,5 +1,5 @@
 import type { ConversationBlock } from '../../shared/types';
-import { isToolLikeOutput, stripTerminalControlSequences, toolOutputLabel } from '../../shared/terminalText';
+import { stripTerminalControlSequences, toolOutputLabel } from '../../shared/terminalText';
 
 type MessageStreamProps = {
   blocks: ConversationBlock[];
@@ -31,11 +31,11 @@ function cleanBlocks(blocks: ConversationBlock[]): ConversationBlock[] {
 }
 
 function MessageBlock({ block }: { block: ConversationBlock }) {
-  if (block.kind === 'assistant' && isToolLikeOutput(block.text)) {
+  if (block.kind === 'tool') {
     return (
-      <details className="message-bubble assistant tool-message" data-block-kind="tool" data-block-status={block.status}>
+      <details className="message-bubble tool tool-message" data-block-kind="tool" data-block-status={block.status}>
         <summary>
-          <span>{toolOutputLabel(block.text)}</span>
+          <span>{typedToolOutputLabel(block.text)}</span>
           <time dateTime={block.createdAt}>{formatTime(block.createdAt)}</time>
         </summary>
         <pre>{block.text}</pre>
@@ -52,6 +52,11 @@ function MessageBlock({ block }: { block: ConversationBlock }) {
       <pre>{block.text}</pre>
     </article>
   );
+}
+
+function typedToolOutputLabel(text: string): string {
+  const name = text.split(/\r?\n/)[0]?.trim();
+  return name ? `工具调用 · ${name}` : toolOutputLabel(text);
 }
 
 function formatTime(value: string): string {

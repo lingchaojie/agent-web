@@ -16,6 +16,7 @@ export function applySessionStreamEvent(state: SessionStreamState, event: Sessio
     return {
       session: event.session,
       blocks: [...event.blocks].sort((a, b) => a.sequence - b.sequence),
+      render: event.render,
       latestSequence: event.sequence,
     };
   }
@@ -51,6 +52,14 @@ export function applySessionStreamEvent(state: SessionStreamState, event: Sessio
     return {
       ...state,
       session: state.session ? { ...state.session, activity: event.activity, activityLabel: event.activityLabel, latestSequence: event.sequence } : state.session,
+      latestSequence: event.sequence,
+    };
+  }
+
+  if (event.type === 'render-changed') {
+    return {
+      ...state,
+      render: event.render,
       latestSequence: event.sequence,
     };
   }

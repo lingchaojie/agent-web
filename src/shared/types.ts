@@ -14,8 +14,9 @@ export type Project = {
 export type SessionSource = 'web-created' | 'claude-history';
 export type SessionStatus = 'running' | 'stopped' | 'failed';
 export type SessionActivity = 'idle' | 'working' | 'stopped';
-export type SessionLifecycle = 'running' | 'idle' | 'waiting-for-input' | 'stopping' | 'stopped' | 'failed';
+export type SessionLifecycle = 'running' | 'idle' | 'waiting-for-input' | 'stopping' | 'stopped' | 'failed' | 'degraded-fallback';
 export type SessionConnection = 'connecting' | 'connected' | 'reconnecting' | 'disconnected';
+export type TranscriptSource = 'structured' | 'pty-fallback';
 
 export type ClaudeSession = {
   id: string;
@@ -43,7 +44,7 @@ export type ParsedInteraction = {
 
 export type ConversationBlockKind = 'user' | 'assistant' | 'tool' | 'system' | 'interaction';
 export type ConversationBlockStatus = 'streaming' | 'final';
-export type ConversationBlockSource = 'live' | 'history';
+export type ConversationBlockSource = 'live' | 'history' | 'structured' | 'pty-fallback';
 
 export type ConversationBlock = {
   id: string;
@@ -58,6 +59,43 @@ export type ConversationBlock = {
   interaction?: ParsedInteraction;
 };
 
+export type RenderRegionKind = 'user' | 'assistant' | 'tool' | 'system' | 'interaction';
+export type RenderRegionStatus = 'streaming' | 'final';
+
+export type RenderRegion = {
+  id: string;
+  kind: RenderRegionKind;
+  text: string;
+  status: RenderRegionStatus;
+  source: TranscriptSource | 'history';
+  createdAt: string;
+  updatedAt: string;
+  interaction?: ParsedInteraction;
+};
+
+export type TransientStatus = {
+  activity: SessionActivity;
+  label?: string;
+  updatedAt?: string;
+};
+
+export type RenderDiagnostic = {
+  id: string;
+  sourceType: string;
+  text: string;
+  createdAt?: string;
+};
+
+export type SessionRenderState = {
+  sessionId: string;
+  regions: RenderRegion[];
+  activeRegion: RenderRegion | null;
+  transientStatus: TransientStatus;
+  diagnostics: RenderDiagnostic[];
+  transcriptSource: TranscriptSource;
+  sequence: number;
+};
+
 export type SessionViewState = {
   sessionId: string;
   projectId: string;
@@ -66,6 +104,8 @@ export type SessionViewState = {
   activity: 'idle' | 'working' | 'stopped';
   activityLabel?: string;
   connection: SessionConnection;
+  transcriptSource: TranscriptSource;
+  claudeSessionId: string | null;
   latestSequence: number;
   updatedAt: string;
   pendingInteraction: ParsedInteraction | null;
@@ -74,16 +114,18 @@ export type SessionViewState = {
 export type SessionStreamState = {
   session: SessionViewState | null;
   blocks: ConversationBlock[];
+  render?: SessionRenderState;
   latestSequence: number;
 };
 
 export type SessionStreamEvent =
-  | { type: 'snapshot'; sessionId: string; sequence: number; session: SessionViewState; blocks: ConversationBlock[] }
+  | { type: 'snapshot'; sessionId: string; sequence: number; session: SessionViewState; blocks: ConversationBlock[]; render?: SessionRenderState }
   | { type: 'block-added'; sessionId: string; sequence: number; block: ConversationBlock }
   | { type: 'block-updated'; sessionId: string; sequence: number; blockId: string; patch: Partial<Pick<ConversationBlock, 'text' | 'interaction' | 'updatedAt'>> }
   | { type: 'block-finalized'; sessionId: string; sequence: number; blockId: string }
   | { type: 'activity-changed'; sessionId: string; sequence: number; activity: SessionViewState['activity']; activityLabel?: string }
   | { type: 'session-changed'; sessionId: string; sequence: number; patch: Partial<Omit<SessionViewState, 'sessionId'>> }
+  | { type: 'render-changed'; sessionId: string; sequence: number; render: SessionRenderState }
   | { type: 'error'; sessionId?: string; sequence?: number; message: string };
 
 export type HistorySession = {
@@ -95,6 +137,8 @@ export type HistorySession = {
   lastMessage: string;
   updatedAt: string;
   blocks: ConversationBlock[];
+  appSessionId?: string;
+  appSession?: ClaudeSession;
 };
 
 export type WsClientMessage =

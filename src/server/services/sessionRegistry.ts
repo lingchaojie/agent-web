@@ -12,6 +12,7 @@ import type {
   SessionStatus,
   SessionStreamEvent,
   SessionViewState,
+  TranscriptSource,
 } from '../../shared/types';
 import type { Db } from '../db';
 
@@ -48,6 +49,7 @@ type SessionViewRow = {
   activity: SessionActivity;
   activity_label: string | null;
   pending_interaction_json: string | null;
+  transcript_source: TranscriptSource;
   updated_at: string;
 };
 
@@ -112,6 +114,19 @@ export class SessionRegistry {
     return row ? toSession(row) : null;
   }
 
+  findByClaudeSessionId(claudeSessionId: string): ClaudeSession | null {
+    const row = this.db.prepare('SELECT * FROM sessions WHERE claude_session_id = ? ORDER BY last_active_at DESC LIMIT 1').get(claudeSessionId) as SessionRow | undefined;
+    return row ? toSession(row) : null;
+  }
+
+  updateClaudeSessionId(id: string, claudeSessionId: string): ClaudeSession {
+    const now = new Date().toISOString();
+    this.db.prepare('UPDATE sessions SET claude_session_id = ?, last_active_at = ? WHERE id = ?').run(claudeSessionId, now, id);
+    const session = this.getSession(id);
+    if (!session) throw new Error('Session not found');
+    return session;
+  }
+
   updateStatus(id: string, status: SessionStatus): ClaudeSession {
     const now = new Date().toISOString();
     this.db.prepare('UPDATE sessions SET status = ?, last_active_at = ? WHERE id = ?').run(status, now, id);
@@ -121,7 +136,7 @@ export class SessionRegistry {
     return session;
   }
 
-  updateSessionView(sessionId: string, patch: Partial<Pick<SessionViewState, 'lifecycle' | 'activity' | 'activityLabel' | 'pendingInteraction'>>): SessionViewState {
+  updateSessionView(sessionId: string, patch: Partial<Pick<SessionViewState, 'lifecycle' | 'activity' | 'activityLabel' | 'pendingInteraction' | 'transcriptSource'>>): SessionViewState {
     const session = this.getSession(sessionId);
     if (!session) throw new Error('Session not found');
 
@@ -132,17 +147,19 @@ export class SessionRegistry {
       activity: patch.activity ?? current?.activity ?? (session.status === 'running' ? 'idle' : 'stopped'),
       activityLabel: patch.activityLabel ?? current?.activity_label ?? null,
       pendingInteraction: patch.pendingInteraction ?? (current?.pending_interaction_json ? JSON.parse(current.pending_interaction_json) as ParsedInteraction : null),
+      transcriptSource: patch.transcriptSource ?? current?.transcript_source ?? 'pty-fallback',
       updatedAt: now,
     };
 
     this.db.prepare(`
-      INSERT INTO session_view_state (session_id, lifecycle, activity, activity_label, pending_interaction_json, updated_at)
-      VALUES (@sessionId, @lifecycle, @activity, @activityLabel, @pendingInteractionJson, @updatedAt)
+      INSERT INTO session_view_state (session_id, lifecycle, activity, activity_label, pending_interaction_json, transcript_source, updated_at)
+      VALUES (@sessionId, @lifecycle, @activity, @activityLabel, @pendingInteractionJson, @transcriptSource, @updatedAt)
       ON CONFLICT(session_id) DO UPDATE SET
         lifecycle = excluded.lifecycle,
         activity = excluded.activity,
         activity_label = excluded.activity_label,
         pending_interaction_json = excluded.pending_interaction_json,
+        transcript_source = excluded.transcript_source,
         updated_at = excluded.updated_at
     `).run({
       sessionId,
@@ -150,6 +167,7 @@ export class SessionRegistry {
       activity: next.activity,
       activityLabel: next.activityLabel,
       pendingInteractionJson: next.pendingInteraction ? JSON.stringify(next.pendingInteraction) : null,
+      transcriptSource: next.transcriptSource,
       updatedAt: next.updatedAt,
     });
 
@@ -313,6 +331,8 @@ function toSessionView(session: ClaudeSession, latestSequence: number, view?: Se
     activity: view?.activity ?? (session.status === 'running' ? 'idle' : 'stopped'),
     activityLabel: view?.activity_label ?? undefined,
     connection: 'connected',
+    transcriptSource: view?.transcript_source ?? 'pty-fallback',
+    claudeSessionId: session.claudeSessionId,
     latestSequence,
     updatedAt: view?.updated_at ?? session.lastActiveAt,
     pendingInteraction: view?.pending_interaction_json ? JSON.parse(view.pending_interaction_json) as ParsedInteraction : null,

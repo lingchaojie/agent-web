@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
-import type { HistorySession, Project } from '../../src/shared/types';
+import type { ClaudeSession, HistorySession, Project } from '../../src/shared/types';
 import SessionList from '../../src/client/components/SessionList';
 
 const project: Project = {
@@ -77,9 +77,36 @@ describe('SessionList', () => {
     expect(screen.getByText('History 21')).toBeInTheDocument();
     expect(screen.getByText('History 25')).toBeInTheDocument();
   });
+
+  it('opens the existing app session for matched history entries', () => {
+    const onOpen = vi.fn();
+    const onResume = vi.fn();
+    const appSession = session({ id: 'app-session-1', claudeSessionId: 'session-1' });
+
+    render(
+      <SessionList
+        project={project}
+        sessions={[]}
+        history={[historySession(1, { appSessionId: appSession.id, appSession })]}
+        loading={false}
+        selectedSessionId={null}
+        onNew={vi.fn()}
+        onContinue={vi.fn()}
+        onResume={onResume}
+        onOpen={onOpen}
+        onStop={vi.fn()}
+        onBackToProjects={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /打开实时会话/i }));
+
+    expect(onOpen).toHaveBeenCalledWith(appSession);
+    expect(onResume).not.toHaveBeenCalled();
+  });
 });
 
-function historySession(index: number): HistorySession {
+function historySession(index: number, overrides: Partial<HistorySession> = {}): HistorySession {
   return {
     projectKey: '-tmp-demo',
     projectPath: '/tmp/demo',
@@ -89,5 +116,20 @@ function historySession(index: number): HistorySession {
     lastMessage: `Last message ${index}`,
     updatedAt: `2026-01-${String(index).padStart(2, '0')}T00:00:00.000Z`,
     blocks: [],
+    ...overrides,
+  };
+}
+
+function session(overrides: Partial<ClaudeSession> = {}): ClaudeSession {
+  return {
+    id: 'session-1',
+    projectId: project.id,
+    source: 'web-created',
+    claudeSessionId: null,
+    title: 'Running session',
+    status: 'running',
+    lastActiveAt: '2026-01-01T00:00:00.000Z',
+    createdAt: '2026-01-01T00:00:00.000Z',
+    ...overrides,
   };
 }

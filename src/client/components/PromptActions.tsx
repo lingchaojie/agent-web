@@ -10,7 +10,7 @@ export default function PromptActions({ interaction, disabled = false, onAction 
   if (!interaction || interaction.kind === 'none' || interaction.actions.length === 0) return null;
 
   return (
-    <div className="prompt-actions">
+    <div className="prompt-actions" data-inline-actions={interaction.kind}>
       <p className="eyebrow">Claude 需要你确认</p>
       <div className="prompt-action-grid">
         {interaction.actions.map((action) => (

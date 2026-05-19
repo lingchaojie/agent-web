@@ -2,8 +2,8 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import type { Project } from '../../shared/types';
 import type { RouteContext } from '../app';
-import { getAvailableHistory } from './historyRoutes';
 import { isAvailableProjectPath, projectPathFromHistoryId } from '../services/projectDiscovery';
+import { getAvailableHistory } from './historyRoutes';
 
 const createSessionSchema = z.object({
   projectId: z.string().min(1),
@@ -48,8 +48,11 @@ export function registerSessionRoutes(app: FastifyInstance, context: RouteContex
 
     try {
       context.runner.start({ sessionId: session.id, cwd: project.path, mode: parsed.data.mode });
-      context.runner.onData(session.id, (data) => context.hub.handleOutput(session.id, data));
-      context.runner.onExit(session.id, (event) => context.hub.broadcastStatus(session.id, event.exitCode === 0 ? 'stopped' : 'failed'));
+      context.runner.onEvent(session.id, (event) => context.hub.handleClaudeEvent(session.id, event));
+      context.runner.onFallbackOutput(session.id, (data) => context.hub.handleOutput(session.id, data));
+      context.runner.onExit(session.id, (event) => {
+        if (event.exitCode !== 0) context.hub.broadcastStatus(session.id, 'failed');
+      });
       context.hub.broadcastStatus(session.id, 'running');
     } catch (error) {
       context.hub.broadcastStatus(session.id, 'failed');
@@ -83,6 +86,9 @@ export function registerSessionRoutes(app: FastifyInstance, context: RouteContex
     const historySession = getAvailableHistory(context).find((session) => session.sessionId === parsed.data.claudeSessionId && session.projectPath === project.path);
     if (!historySession) return reply.code(404).send({ error: 'History session not found for project' });
 
+    const existingSession = context.sessions.findByClaudeSessionId(parsed.data.claudeSessionId);
+    if (existingSession && existingSession.projectId === project.id) return existingSession;
+
     const session = context.sessions.createSession({
       projectId: project.id,
       source: 'claude-history',
@@ -93,8 +99,11 @@ export function registerSessionRoutes(app: FastifyInstance, context: RouteContex
     try {
       seedHistoryBlocks(context, session.id, historySession);
       context.runner.start({ sessionId: session.id, cwd: project.path, mode: 'resume', claudeSessionId: parsed.data.claudeSessionId });
-      context.runner.onData(session.id, (data) => context.hub.handleOutput(session.id, data));
-      context.runner.onExit(session.id, (event) => context.hub.broadcastStatus(session.id, event.exitCode === 0 ? 'stopped' : 'failed'));
+      context.runner.onEvent(session.id, (event) => context.hub.handleClaudeEvent(session.id, event));
+      context.runner.onFallbackOutput(session.id, (data) => context.hub.handleOutput(session.id, data));
+      context.runner.onExit(session.id, (event) => {
+        if (event.exitCode !== 0) context.hub.broadcastStatus(session.id, 'failed');
+      });
       context.hub.broadcastStatus(session.id, 'running');
     } catch (error) {
       context.hub.broadcastStatus(session.id, 'failed');

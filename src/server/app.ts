@@ -8,7 +8,7 @@ import type { AppConfig } from './config';
 import { isAuthorized, isWebSocketProtocolAuthorized } from './auth';
 import type { ProjectRegistry } from './services/projectRegistry';
 import type { SessionRegistry } from './services/sessionRegistry';
-import type { PtyRunner } from './services/ptyRunner';
+import type { ClaudeEventSource } from './services/claudeEventSource';
 import type { RealtimeHub } from './services/realtimeHub';
 import { registerAuthRoutes } from './routes/authRoutes';
 import { registerProjectRoutes } from './routes/projectRoutes';
@@ -19,7 +19,7 @@ export type RouteContext = {
   config: AppConfig;
   projects: ProjectRegistry;
   sessions: SessionRegistry;
-  runner: PtyRunner;
+  runner: ClaudeEventSource;
   hub: RealtimeHub;
 };
 

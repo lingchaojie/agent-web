@@ -1,5 +1,8 @@
-import type { ConversationBlock, PromptAction, SessionActivity, SessionLifecycle, SessionStreamEvent, WsServerMessage } from '../../shared/types';
+import type { ConversationBlock, ConversationBlockSource, PromptAction, SessionActivity, SessionLifecycle, SessionRenderState, SessionStreamEvent, WsServerMessage } from '../../shared/types';
 import type { SessionRegistry } from './sessionRegistry';
+import type { ClaudeSemanticEvent } from './claudeEventSource';
+import { applyClaudeEventToRenderState, emptySessionRenderState } from '../../shared/sessionRender';
+import { mapClaudeEventToSemantic } from './claudeSemanticMapper';
 import { parseInteraction } from './interactionParser';
 import { classifyTerminalStreamFrame } from './terminalText';
 
@@ -14,7 +17,12 @@ export class RealtimeHub {
   private readonly latestActions = new Map<string, Map<string, PromptAction>>();
   private readonly activity = new Map<string, SessionActivity>();
   private readonly streamingBlocks = new Map<string, ConversationBlock>();
+  private readonly structuredBlocks = new Map<string, Map<string, ConversationBlock>>();
   private readonly pendingEchoes = new Map<string, string>();
+  private readonly sendingInput = new Set<string>();
+  private readonly queuedEvents = new Map<string, ClaudeSemanticEvent[]>();
+  private readonly transcriptSources = new Map<string, ConversationBlockSource>();
+  private readonly renderStates = new Map<string, SessionRenderState>();
 
   constructor(private readonly sessions: SessionRegistry, private readonly runner: InputRunner) {}
 
@@ -42,11 +50,19 @@ export class RealtimeHub {
       sequence: snapshot.latestSequence,
       session: snapshot.session,
       blocks: snapshot.blocks,
+      render: this.renderStates.get(input.sessionId),
     });
     return detach;
   }
 
   handleOutput(sessionId: string, text: string): void {
+    if (this.transcriptSources.get(sessionId) === 'structured') {
+      const frame = classifyTerminalStreamFrame(text);
+      if (frame.kind === 'activity') this.broadcastActivity(sessionId, frame.activity);
+      return;
+    }
+
+    this.markTranscriptSource(sessionId, 'pty-fallback');
     text = this.removePendingEcho(sessionId, text);
     const frame = classifyTerminalStreamFrame(text);
     if (frame.kind === 'empty') return;
@@ -65,7 +81,7 @@ export class RealtimeHub {
     this.latestActions.set(sessionId, new Map(interaction.actions.map((action) => [action.id, action])));
 
     if (!finalizedBlock) {
-      const block = this.sessions.appendBlock(sessionId, { kind: frame.blockKind, text: frame.text, status: frame.status, source: 'live', interaction });
+      const block = this.sessions.appendBlock(sessionId, { kind: frame.blockKind, text: frame.text, status: frame.status, source: 'pty-fallback', interaction });
       this.broadcastStreamEvent({ type: 'block-added', sessionId, sequence: block.sequence, block });
     }
 
@@ -77,20 +93,24 @@ export class RealtimeHub {
   }
 
   sendInput(sessionId: string, text: string): void {
-    this.runner.sendInput(sessionId, text);
-    this.pendingEchoes.set(sessionId, text);
-    this.broadcastUserMessage(sessionId, text);
-    this.broadcastActivity(sessionId, 'working');
+    this.deliverInput(sessionId, text);
   }
 
   sendAction(sessionId: string, actionId: string): void {
     const action = this.latestActions.get(sessionId)?.get(actionId);
     if (!action) throw new Error('Action not found');
 
-    this.runner.sendInput(sessionId, action.input);
-    this.pendingEchoes.set(sessionId, action.input);
-    this.broadcastUserMessage(sessionId, action.input);
-    this.broadcastActivity(sessionId, 'working');
+    this.deliverInput(sessionId, action.input);
+  }
+
+  handleClaudeEvent(sessionId: string, event: ClaudeSemanticEvent): void {
+    if (this.sendingInput.has(sessionId)) {
+      const queued = this.queuedEvents.get(sessionId) ?? [];
+      queued.push(event);
+      this.queuedEvents.set(sessionId, queued);
+      return;
+    }
+    this.applyClaudeEvent(sessionId, event);
   }
 
   broadcastStatus(sessionId: string, status: SessionLifecycle): void {
@@ -109,9 +129,10 @@ export class RealtimeHub {
     if (status !== 'running' && status !== 'stopping') this.broadcastActivity(sessionId, 'stopped');
   }
 
-  private broadcastActivity(sessionId: string, activity: SessionActivity): void {
+  private broadcastActivity(sessionId: string, activity: SessionActivity, activityLabel?: string): void {
     this.activity.set(sessionId, activity);
-    this.broadcastStreamEvent({ type: 'activity-changed', sessionId, sequence: this.nextEventSequence(sessionId), activity });
+    this.sessions.updateSessionView(sessionId, { activity, activityLabel });
+    this.broadcastStreamEvent({ type: 'activity-changed', sessionId, sequence: this.nextEventSequence(sessionId), activity, activityLabel });
   }
 
   private removePendingEcho(sessionId: string, text: string): string {
@@ -130,7 +151,7 @@ export class RealtimeHub {
   private updateStreamingBlock(sessionId: string, text: string): void {
     let block = this.streamingBlocks.get(sessionId);
     if (!block) {
-      block = this.sessions.appendBlock(sessionId, { kind: 'assistant', text, status: 'streaming', source: 'live' });
+      block = this.sessions.appendBlock(sessionId, { kind: 'assistant', text, status: 'streaming', source: 'pty-fallback' });
       this.streamingBlocks.set(sessionId, block);
       this.broadcastStreamEvent({ type: 'block-added', sessionId, sequence: block.sequence, block });
       return;
@@ -163,8 +184,110 @@ export class RealtimeHub {
   }
 
   private broadcastUserMessage(sessionId: string, text: string): void {
-    const block = this.sessions.appendBlock(sessionId, { kind: 'user', text, status: 'final', source: 'live' });
+    const source = this.transcriptSources.get(sessionId) === 'structured' ? 'structured' : 'pty-fallback';
+    const block = this.sessions.appendBlock(sessionId, { kind: 'user', text, status: 'final', source });
     this.broadcastStreamEvent({ type: 'block-added', sessionId, sequence: block.sequence, block });
+  }
+
+  private deliverInput(sessionId: string, text: string): void {
+    this.sendingInput.add(sessionId);
+    try {
+      this.runner.sendInput(sessionId, text);
+    } finally {
+      this.sendingInput.delete(sessionId);
+    }
+    this.pendingEchoes.set(sessionId, text);
+    this.broadcastUserMessage(sessionId, text);
+    this.broadcastActivity(sessionId, 'working');
+    this.flushQueuedEvents(sessionId);
+  }
+
+  private flushQueuedEvents(sessionId: string): void {
+    const queued = this.queuedEvents.get(sessionId);
+    if (!queued) return;
+    this.queuedEvents.delete(sessionId);
+    for (const event of queued) this.applyClaudeEvent(sessionId, event);
+  }
+
+  private applyClaudeEvent(sessionId: string, event: ClaudeSemanticEvent): void {
+    if (event.type === 'session-identity-observed') {
+      this.sessions.updateClaudeSessionId(sessionId, event.claudeSessionId);
+      this.broadcastStreamEvent({ type: 'session-changed', sessionId, sequence: this.nextEventSequence(sessionId), patch: { claudeSessionId: event.claudeSessionId, updatedAt: event.createdAt } });
+      return;
+    }
+
+    this.updateRenderState(sessionId, event);
+    this.markTranscriptSource(sessionId, event.type === 'structured-source-unavailable' ? 'pty-fallback' : 'structured');
+    const mapped = mapClaudeEventToSemantic(event);
+    if (mapped.lifecycle) this.broadcastSessionPatch(sessionId, { lifecycle: mapped.lifecycle });
+    if (mapped.activity) this.broadcastActivity(sessionId, mapped.activity.activity, mapped.activity.activityLabel);
+    if (!mapped.block) return;
+
+    const key = mapped.block.sourceEventId;
+    if (key && mapped.block.status === 'streaming') {
+      this.upsertStructuredBlock(sessionId, key, mapped.block);
+      return;
+    }
+    if (key && this.structuredBlocks.get(sessionId)?.has(key)) {
+      this.upsertStructuredBlock(sessionId, key, mapped.block);
+      if (mapped.block.status === 'final') this.finalizeStructuredBlock(sessionId, key);
+      return;
+    }
+
+    const block = this.sessions.appendBlock(sessionId, {
+      kind: mapped.block.kind,
+      text: mapped.block.text,
+      status: mapped.block.status,
+      source: mapped.block.source,
+      interaction: mapped.block.interaction,
+    });
+    this.broadcastStreamEvent({ type: 'block-added', sessionId, sequence: block.sequence, block });
+    if (mapped.block.kind === 'interaction' && mapped.block.interaction) {
+      this.latestActions.set(sessionId, new Map(mapped.block.interaction.actions.map((action) => [action.id, action])));
+    }
+  }
+
+  private updateRenderState(sessionId: string, event: ClaudeSemanticEvent): void {
+    const current = this.renderStates.get(sessionId) ?? emptySessionRenderState(sessionId);
+    const render = applyClaudeEventToRenderState(current, event);
+    this.renderStates.set(sessionId, render);
+    this.broadcastStreamEvent({ type: 'render-changed', sessionId, sequence: this.nextEventSequence(sessionId), render });
+  }
+
+  private upsertStructuredBlock(sessionId: string, key: string, input: NonNullable<ReturnType<typeof mapClaudeEventToSemantic>['block']>): void {
+    const blocks = this.structuredBlocks.get(sessionId) ?? new Map<string, ConversationBlock>();
+    const existing = blocks.get(key);
+    if (!existing) {
+      const block = this.sessions.appendBlock(sessionId, { kind: input.kind, text: input.text, status: input.status, source: input.source, interaction: input.interaction });
+      blocks.set(key, block);
+      this.structuredBlocks.set(sessionId, blocks);
+      this.broadcastStreamEvent({ type: 'block-added', sessionId, sequence: block.sequence, block });
+      return;
+    }
+
+    const updated = this.sessions.updateBlock(sessionId, existing.id, { text: input.text, interaction: input.interaction });
+    blocks.set(key, updated);
+    this.broadcastStreamEvent({ type: 'block-updated', sessionId, sequence: this.nextEventSequence(sessionId), blockId: updated.id, patch: { text: updated.text, interaction: updated.interaction, updatedAt: updated.updatedAt } });
+  }
+
+  private finalizeStructuredBlock(sessionId: string, key: string): void {
+    const blocks = this.structuredBlocks.get(sessionId);
+    const block = blocks?.get(key);
+    if (!block) return;
+    const finalized = this.sessions.finalizeBlock(sessionId, block.id);
+    blocks?.delete(key);
+    this.broadcastStreamEvent({ type: 'block-finalized', sessionId, sequence: this.nextEventSequence(sessionId), blockId: finalized.id });
+  }
+
+  private markTranscriptSource(sessionId: string, source: ConversationBlockSource): void {
+    if (this.transcriptSources.get(sessionId) === source) return;
+    this.transcriptSources.set(sessionId, source);
+    if (source === 'structured' || source === 'pty-fallback') this.broadcastSessionPatch(sessionId, { transcriptSource: source });
+  }
+
+  private broadcastSessionPatch(sessionId: string, patch: Partial<Parameters<SessionRegistry['updateSessionView']>[1]>): void {
+    this.sessions.updateSessionView(sessionId, patch);
+    this.broadcastStreamEvent({ type: 'session-changed', sessionId, sequence: this.nextEventSequence(sessionId), patch });
   }
 
   private addClient(sessionId: string, send: SendFn): () => void {

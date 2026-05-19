@@ -43,6 +43,36 @@ describe('SessionRegistry', () => {
     expect(registry.getSession(session.id)?.status).toBe('stopped');
   });
 
+  it('persists native Claude session ids after app session creation', () => {
+    const db = createDatabase(':memory:');
+    const registry = new SessionRegistry(db);
+    const session = registry.createSession({
+      projectId: 'project-1',
+      source: 'web-created',
+      claudeSessionId: null,
+      title: 'New session',
+    });
+
+    const updated = registry.updateClaudeSessionId(session.id, 'native-session-1');
+
+    expect(updated).toMatchObject({ id: session.id, claudeSessionId: 'native-session-1' });
+    expect(new SessionRegistry(db).getSession(session.id)?.claudeSessionId).toBe('native-session-1');
+  });
+
+  it('finds sessions by native Claude session id', () => {
+    const db = createDatabase(':memory:');
+    const registry = new SessionRegistry(db);
+    const session = registry.createSession({
+      projectId: 'project-1',
+      source: 'web-created',
+      claudeSessionId: 'native-session-1',
+      title: 'New session',
+    });
+
+    expect(registry.findByClaudeSessionId('native-session-1')?.id).toBe(session.id);
+    expect(registry.findByClaudeSessionId('missing')).toBeNull();
+  });
+
   it('stores ordered conversation blocks for snapshots', () => {
     const db = createDatabase(':memory:');
     const registry = new SessionRegistry(db);

@@ -94,6 +94,35 @@ describe('session stream reducer', () => {
     expect(replaced.latestSequence).toBe(20);
   });
 
+  it('applies render-state deltas without adding transcript blocks', () => {
+    let state = applySessionStreamEvent(emptySessionStreamState(), {
+      type: 'snapshot',
+      sessionId: 'session-1',
+      sequence: 1,
+      session: sessionView({ latestSequence: 1 }),
+      blocks: [],
+    });
+
+    state = applySessionStreamEvent(state, {
+      type: 'render-changed',
+      sessionId: 'session-1',
+      sequence: 2,
+      render: {
+        sessionId: 'session-1',
+        regions: [],
+        activeRegion: { id: 'msg-1', kind: 'assistant', text: 'Hello', status: 'streaming', source: 'structured', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' },
+        transientStatus: { activity: 'working' },
+        diagnostics: [],
+        transcriptSource: 'structured',
+        sequence: 2,
+      },
+    });
+
+    expect(state.blocks).toEqual([]);
+    expect(state.render?.activeRegion).toMatchObject({ id: 'msg-1', text: 'Hello', status: 'streaming' });
+    expect(state.latestSequence).toBe(2);
+  });
+
   it('applies activity and lifecycle deltas without adding transcript blocks', () => {
     let state = applySessionStreamEvent(emptySessionStreamState(), {
       type: 'snapshot',
@@ -120,6 +149,33 @@ describe('session stream reducer', () => {
     expect(state.blocks).toEqual([]);
     expect(state.session).toMatchObject({ activity: 'working', activityLabel: 'Thinking', lifecycle: 'waiting-for-input' });
   });
+
+  it('applies native identity deltas without resetting transcript blocks', () => {
+    const initial = applySessionStreamEvent(emptySessionStreamState(), {
+      type: 'snapshot',
+      sessionId: 'session-1',
+      sequence: 1,
+      session: sessionView({ latestSequence: 1, claudeSessionId: null }),
+      blocks: [block({ id: 'assistant-1', text: 'hello', sequence: 1 })],
+    });
+
+    const updated = applySessionStreamEvent(initial, {
+      type: 'session-changed',
+      sessionId: 'session-1',
+      sequence: 2,
+      patch: { claudeSessionId: 'native-session-1' },
+    });
+    const duplicate = applySessionStreamEvent(updated, {
+      type: 'session-changed',
+      sessionId: 'session-1',
+      sequence: 2,
+      patch: { claudeSessionId: 'native-session-1' },
+    });
+
+    expect(updated.blocks).toEqual(initial.blocks);
+    expect(updated.session?.claudeSessionId).toBe('native-session-1');
+    expect(duplicate).toEqual(updated);
+  });
 });
 
 function sessionView(overrides: Partial<SessionViewState> = {}): SessionViewState {
@@ -130,6 +186,8 @@ function sessionView(overrides: Partial<SessionViewState> = {}): SessionViewStat
     lifecycle: 'running',
     activity: 'idle',
     connection: 'connected',
+    transcriptSource: 'structured',
+    claudeSessionId: null,
     latestSequence: 0,
     updatedAt: '2026-01-01T00:00:00.000Z',
     pendingInteraction: null,

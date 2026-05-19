@@ -1,22 +1,11 @@
 import { existsSync, lstatSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import type { ConversationBlock, ConversationBlockKind, HistorySession } from '../../shared/types';
+import type { ConversationBlock, HistorySession } from '../../shared/types';
+import { mapClaudeJsonlEntryToSemantic, type ClaudeJsonlEntry } from './claudeSemanticMapper';
 
-type ParsedLine = {
-  type?: string;
+type ParsedLine = ClaudeJsonlEntry & {
   summary?: string;
-  timestamp?: string;
   cwd?: string;
-  content?: unknown;
-  message?: {
-    role?: string;
-    content?: unknown;
-  };
-};
-
-type HistoryBlockPart = {
-  kind: ConversationBlockKind;
-  text: string;
 };
 
 export const MAX_TRANSCRIPT_BYTES = 5 * 1024 * 1024;
@@ -97,19 +86,21 @@ function readTranscript(projectKey: string, transcriptPath: string): HistorySess
       if (parsed.cwd) cwd = parsed.cwd;
       if (parsed.type === 'summary' && parsed.summary) title = parsed.summary;
 
-      const parts = extractBlockParts(parsed);
+      const parts = mapClaudeJsonlEntryToSemantic(parsed);
       for (const part of parts) {
         lastMessage = part.text;
+        const timestamp = part.createdAt ?? parsed.timestamp ?? updatedAt;
         blocks.push({
           id: `history-${sessionId}-${blocks.length + 1}`,
           sessionId,
           kind: part.kind,
           text: part.text,
           sequence: blocks.length + 1,
-          status: 'final',
+          status: part.status,
           source: 'history',
-          createdAt: parsed.timestamp ?? updatedAt,
-          updatedAt: parsed.timestamp ?? updatedAt,
+          interaction: part.interaction,
+          createdAt: timestamp,
+          updatedAt: timestamp,
         });
       }
     }
@@ -137,54 +128,3 @@ function parseLine(line: string): ParsedLine | null {
   }
 }
 
-function extractBlockParts(parsed: ParsedLine): HistoryBlockPart[] {
-  if (parsed.type === 'system') return textToBlockParts('system', extractText(parsed.content));
-
-  const role = parsed.message?.role;
-  const content = parsed.message?.content;
-  if (Array.isArray(content)) return content.flatMap((part) => extractContentPart(role, part));
-
-  const kind = messageRoleToBlockKind(role);
-  if (!kind) return [];
-  return textToBlockParts(kind, extractText(content));
-}
-
-function extractContentPart(role: string | undefined, part: unknown): HistoryBlockPart[] {
-  if (!part || typeof part !== 'object') return [];
-  const type = 'type' in part && typeof part.type === 'string' ? part.type : '';
-
-  if (type === 'tool_use') return textToBlockParts('tool', extractToolUseText(part));
-  if (type === 'tool_result') return textToBlockParts('tool', extractText('content' in part ? part.content : undefined));
-
-  const kind = messageRoleToBlockKind(role);
-  if (!kind) return [];
-  return textToBlockParts(kind, extractText(part));
-}
-
-function extractText(content: unknown): string {
-  if (typeof content === 'string') return content;
-  if (Array.isArray(content)) {
-    return content.map(extractText).filter(Boolean).join('\n');
-  }
-  if (content && typeof content === 'object' && 'text' in content && typeof content.text === 'string') {
-    return content.text;
-  }
-  return '';
-}
-
-function extractToolUseText(part: object): string {
-  const name = 'name' in part && typeof part.name === 'string' ? part.name : 'Tool';
-  const input = 'input' in part ? part.input : undefined;
-  const command = input && typeof input === 'object' && 'command' in input && typeof input.command === 'string' ? input.command : '';
-  return [name, command].filter(Boolean).join('\n');
-}
-
-function textToBlockParts(kind: ConversationBlockKind, text: string): HistoryBlockPart[] {
-  return text ? [{ kind, text }] : [];
-}
-
-function messageRoleToBlockKind(role: string | undefined): ConversationBlockKind | null {
-  if (role === 'user' || role === 'assistant') return role;
-  if (role === 'system' || role === 'tool') return role;
-  return null;
-}

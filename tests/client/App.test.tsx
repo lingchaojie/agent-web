@@ -68,6 +68,8 @@ function sessionView(overrides: Partial<SessionViewState> = {}): SessionViewStat
     lifecycle: 'running',
     activity: 'idle',
     connection: 'connected',
+    transcriptSource: 'structured',
+    claudeSessionId: null,
     latestSequence: 0,
     updatedAt: '2026-01-01T00:00:00.000Z',
     pendingInteraction: null,

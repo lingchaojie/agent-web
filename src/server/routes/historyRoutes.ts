@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 import type { FastifyInstance } from 'fastify';
-import type { HistorySession, SessionViewState } from '../../shared/types';
+import type { ConversationBlock, HistorySession, RenderRegion, SessionViewState } from '../../shared/types';
 import type { RouteContext } from '../app';
 import { readClaudeHistory } from '../services/claudeHistoryReader';
 import { historyProjectId, isAvailableProjectPath } from '../services/projectDiscovery';
@@ -23,6 +23,8 @@ export function registerHistoryRoutes(app: FastifyInstance, context: RouteContex
       lifecycle: 'stopped',
       activity: 'stopped',
       connection: 'disconnected',
+      transcriptSource: 'structured',
+      claudeSessionId: history.sessionId,
       latestSequence,
       updatedAt: history.updatedAt,
       pendingInteraction: null,
@@ -34,11 +36,38 @@ export function registerHistoryRoutes(app: FastifyInstance, context: RouteContex
       sequence: latestSequence,
       session,
       blocks: history.blocks,
+      render: {
+        sessionId: history.sessionId,
+        regions: history.blocks.map(historyBlockToRegion),
+        activeRegion: null,
+        transientStatus: { activity: 'stopped' },
+        diagnostics: [],
+        transcriptSource: 'structured',
+        sequence: latestSequence,
+      },
     };
   });
 }
 
 export function getAvailableHistory(context: RouteContext): HistorySession[] {
   const projectsRoot = join(context.config.claudeConfigDir, 'projects');
-  return readClaudeHistory(projectsRoot).filter((session) => session.projectPath !== null && isAvailableProjectPath(session.projectPath));
+  return readClaudeHistory(projectsRoot)
+    .filter((session) => session.projectPath !== null && isAvailableProjectPath(session.projectPath))
+    .map((session) => {
+      const appSession = context.sessions.findByClaudeSessionId(session.sessionId) ?? undefined;
+      return appSession ? { ...session, appSessionId: appSession.id, appSession } : session;
+    });
+}
+
+function historyBlockToRegion(block: ConversationBlock): RenderRegion {
+  return {
+    id: block.id,
+    kind: block.kind,
+    text: block.text,
+    status: block.status,
+    source: 'history',
+    createdAt: block.createdAt,
+    updatedAt: block.updatedAt,
+    interaction: block.interaction,
+  };
 }

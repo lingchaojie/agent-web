@@ -68,5 +68,12 @@ export function createDatabase(path: string): Db {
       updated_at TEXT NOT NULL
     );
   `);
+  addColumnIfMissing(db, 'session_view_state', 'transcript_source', "TEXT NOT NULL DEFAULT 'pty-fallback'");
   return db;
+}
+
+function addColumnIfMissing(db: Db, table: string, column: string, definition: string): void {
+  const columns = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+  if (columns.some((item) => item.name === column)) return;
+  db.prepare(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`).run();
 }

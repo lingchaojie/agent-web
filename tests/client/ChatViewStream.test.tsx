@@ -81,6 +81,34 @@ describe('ChatView stream protocol rendering', () => {
     await waitFor(() => expect(container.querySelector('[data-status-transition="reduced"]')).toHaveTextContent('工作中'));
   });
 
+  it('renders snapshot render state as a CLI-like surface instead of chat bubbles', async () => {
+    const { container } = render(<ChatView session={session} onStatusChange={vi.fn()} onBackToSessions={vi.fn()} onStop={vi.fn()} />);
+    socket.dispatchEvent(new Event('open'));
+
+    socket.dispatchEvent(serverMessage({
+      type: 'snapshot',
+      sessionId: session.id,
+      sequence: 2,
+      session: sessionView({ latestSequence: 2 }),
+      blocks: [],
+      render: {
+        sessionId: session.id,
+        regions: [{ id: 'user-1', kind: 'user', text: '你好', status: 'final', source: 'structured', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' }],
+        activeRegion: { id: 'assistant-1', kind: 'assistant', text: '正在输出', status: 'streaming', source: 'structured', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' },
+        transientStatus: { activity: 'working', label: 'requesting' },
+        diagnostics: [],
+        transcriptSource: 'structured',
+        sequence: 2,
+      },
+    }));
+
+    expect(await screen.findByText('你好')).toBeInTheDocument();
+    expect(screen.getByText('正在输出')).toBeInTheDocument();
+    expect(screen.getByText('requesting')).toBeInTheDocument();
+    expect(container.querySelector('.cli-render-surface')).toBeInTheDocument();
+    expect(container.querySelectorAll('article.message-bubble')).toHaveLength(0);
+  });
+
   it('renders snapshot blocks as typed native conversation blocks', async () => {
     const { container } = render(<ChatView session={session} onStatusChange={vi.fn()} onBackToSessions={vi.fn()} onStop={vi.fn()} />);
     socket.dispatchEvent(new Event('open'));
@@ -138,6 +166,16 @@ describe('ChatView stream protocol rendering', () => {
     expect(sendWs).toHaveBeenCalledWith(socket, { type: 'action', sessionId: session.id, actionId: 'allow', input: '' });
   });
 
+  it('shows degraded fallback source state without adding transcript blocks', async () => {
+    const { container } = render(<ChatView session={session} onStatusChange={vi.fn()} onBackToSessions={vi.fn()} onStop={vi.fn()} />);
+    socket.dispatchEvent(new Event('open'));
+    socket.dispatchEvent(serverMessage({ type: 'snapshot', sessionId: session.id, sequence: 1, session: sessionView({ latestSequence: 1, lifecycle: 'degraded-fallback', transcriptSource: 'pty-fallback' }), blocks: [] }));
+
+    expect(await screen.findByText('降级模式')).toBeInTheDocument();
+    expect(screen.getByText('PTY fallback')).toBeInTheDocument();
+    expect(container.querySelectorAll('[data-block-kind]')).toHaveLength(0);
+  });
+
   it('shows a non-destructive disconnected state without clearing blocks', async () => {
     render(<ChatView session={session} onStatusChange={vi.fn()} onBackToSessions={vi.fn()} onStop={vi.fn()} />);
     socket.dispatchEvent(new Event('open'));
@@ -168,6 +206,8 @@ function sessionView(overrides: Partial<SessionViewState> = {}): SessionViewStat
     lifecycle: 'running',
     activity: 'idle',
     connection: 'connected',
+    transcriptSource: 'structured',
+    claudeSessionId: null,
     latestSequence: 0,
     updatedAt: '2026-01-01T00:00:00.000Z',
     pendingInteraction: null,

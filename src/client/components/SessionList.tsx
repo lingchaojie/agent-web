@@ -105,8 +105,8 @@ export default function SessionList({
                 <p>{item.lastMessage || '暂无预览。'}</p>
                 <span>{formatDate(item.updatedAt)}</span>
               </div>
-              <button className="secondary-button compact" type="button" onClick={() => onResume(item)} disabled={loading}>
-                恢复
+              <button className="secondary-button compact" type="button" onClick={() => item.appSession ? onOpen(item.appSession) : onResume(item)} disabled={loading}>
+                {item.appSession ? '打开实时会话' : '恢复'}
               </button>
             </article>
           ))}

@@ -5,11 +5,12 @@ import MessageStream from '../../src/client/components/MessageStream';
 import type { ConversationBlock, ConversationBlockKind } from '../../src/shared/types';
 
 describe('MessageStream', () => {
-  it('renders tool calls collapsed by default', () => {
-    const { container } = render(<MessageStream blocks={[block('assistant', '● Bash(npm test)\n ⎿  71 passed')]} />);
+  it('renders typed tool calls collapsed by default', () => {
+    const { container } = render(<MessageStream blocks={[block('tool', 'Bash\nnpm test')]} />);
 
     expect(screen.getByText('工具调用 · Bash')).toBeInTheDocument();
     expect(container.querySelector('details.tool-message')).not.toHaveAttribute('open');
+    expect(container.querySelector('[data-block-kind="tool"]')).toBeInTheDocument();
   });
 
   it('renders typed assistant blocks without legacy append-only merging', () => {
