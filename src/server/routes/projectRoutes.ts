@@ -1,6 +1,8 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import type { RouteContext } from '../app';
+import { getAvailableHistory } from './historyRoutes';
+import { mergeDiscoveredProjects } from '../services/projectDiscovery';
 
 const addProjectSchema = z.object({
   name: z.string().min(1),
@@ -9,7 +11,7 @@ const addProjectSchema = z.object({
 });
 
 export function registerProjectRoutes(app: FastifyInstance, context: RouteContext): void {
-  app.get('/api/projects', async () => context.projects.listProjects());
+  app.get('/api/projects', async () => mergeDiscoveredProjects(context.projects.listProjects(), getAvailableHistory(context)));
 
   app.post('/api/projects', async (request, reply) => {
     const parsed = addProjectSchema.safeParse(request.body);

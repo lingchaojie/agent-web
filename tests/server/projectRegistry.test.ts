@@ -31,6 +31,7 @@ describe('ProjectRegistry', () => {
     expect(project.path).toBe(root);
     expect(project.favorite).toBe(true);
     expect(project.available).toBe(true);
+    expect(project.source).toBe('whitelist');
     expect(projects).toHaveLength(1);
     expect(projects[0].id).toBe(project.id);
   });

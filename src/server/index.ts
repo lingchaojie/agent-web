@@ -10,6 +10,7 @@ const config = loadConfig();
 const db = createDatabase(config.databasePath);
 const projects = new ProjectRegistry(db);
 const sessions = new SessionRegistry(db);
+sessions.stopRunningSessions();
 const runner = new PtyRunner({ claudeBin: config.claudeBin });
 const hub = new RealtimeHub(sessions, runner);
 

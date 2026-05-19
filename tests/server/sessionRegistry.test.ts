@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { createDatabase } from '../../src/server/db';
 import { SessionRegistry } from '../../src/server/services/sessionRegistry';
@@ -24,7 +27,90 @@ describe('SessionRegistry', () => {
     expect(listed[0].id).toBe(session.id);
   });
 
-  it('stores and replays recent output with a bounded cache', () => {
+  it('stops running sessions left behind by a previous server process', () => {
+    const db = createDatabase(':memory:');
+    const registry = new SessionRegistry(db);
+    const session = registry.createSession({
+      projectId: 'project-1',
+      source: 'web-created',
+      claudeSessionId: null,
+      title: 'New session',
+    });
+
+    registry.updateStatus(session.id, 'running');
+    registry.stopRunningSessions();
+
+    expect(registry.getSession(session.id)?.status).toBe('stopped');
+  });
+
+  it('stores ordered conversation blocks for snapshots', () => {
+    const db = createDatabase(':memory:');
+    const registry = new SessionRegistry(db);
+    const session = registry.createSession({
+      projectId: 'project-1',
+      source: 'web-created',
+      claudeSessionId: null,
+      title: 'New session',
+    });
+
+    registry.appendBlock(session.id, { kind: 'assistant', text: 'one', status: 'final', source: 'live' });
+    registry.appendBlock(session.id, { kind: 'assistant', text: 'two', status: 'final', source: 'live' });
+    registry.appendBlock(session.id, { kind: 'assistant', text: 'three', status: 'final', source: 'live' });
+
+    expect(registry.getSnapshot(session.id).blocks.map((block) => block.text)).toEqual(['one', 'two', 'three']);
+  });
+
+  it('rejects conversation blocks for missing sessions', () => {
+    const db = createDatabase(':memory:');
+    const registry = new SessionRegistry(db);
+
+    expect(() => registry.appendBlock('missing-session', { kind: 'assistant', text: 'orphan', status: 'final', source: 'live' })).toThrow('Session not found');
+  });
+
+  it('persists session view state in snapshots across registry instances', () => {
+    const db = createDatabase(':memory:');
+    const registry = new SessionRegistry(db);
+    const session = registry.createSession({
+      projectId: 'project-1',
+      source: 'web-created',
+      claudeSessionId: null,
+      title: 'New session',
+    });
+
+    registry.updateSessionView(session.id, {
+      lifecycle: 'waiting-for-input',
+      activity: 'idle',
+      pendingInteraction: { kind: 'choice', raw: 'Choose\n1. Yes', actions: [{ id: 'choice-1', label: 'Yes', input: '1', variant: 'allow' }] },
+    });
+
+    expect(new SessionRegistry(db).getSnapshot(session.id).session).toMatchObject({
+      lifecycle: 'waiting-for-input',
+      activity: 'idle',
+      pendingInteraction: expect.objectContaining({ kind: 'choice' }),
+    });
+  });
+
+  it('keeps existing local database data when opening with newer stream schema', () => {
+    const root = mkdtempSync(join(tmpdir(), 'webagent-db-'));
+    const path = join(root, 'webagent.db');
+    try {
+      const first = createDatabase(path);
+      first.prepare(`
+        INSERT INTO projects (id, name, path, favorite, created_at, updated_at)
+        VALUES ('project-1', 'Existing project', '/tmp/existing', 0, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')
+      `).run();
+      first.close();
+
+      const reopened = createDatabase(path);
+      expect(reopened.prepare('SELECT name FROM projects WHERE id = ?').get('project-1')).toEqual({ name: 'Existing project' });
+      expect(reopened.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'conversation_blocks'").get()).toEqual({ name: 'conversation_blocks' });
+      reopened.close();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('bounds retained stream events per session', () => {
     const db = createDatabase(':memory:');
     const registry = new SessionRegistry(db, 2);
     const session = registry.createSession({
@@ -34,19 +120,10 @@ describe('SessionRegistry', () => {
       title: 'New session',
     });
 
-    registry.appendOutput(session.id, { role: 'assistant', text: 'one' });
-    registry.appendOutput(session.id, { role: 'assistant', text: 'two' });
-    registry.appendOutput(session.id, { role: 'assistant', text: 'three' });
+    registry.appendStreamEvent({ type: 'activity-changed', sessionId: session.id, sequence: 1, activity: 'working' });
+    registry.appendStreamEvent({ type: 'activity-changed', sessionId: session.id, sequence: 2, activity: 'idle' });
+    registry.appendStreamEvent({ type: 'activity-changed', sessionId: session.id, sequence: 3, activity: 'working' });
 
-    const replay = registry.getRecentOutput(session.id);
-    expect(replay.map((message) => message.text)).toEqual(['two', 'three']);
-  });
-
-  it('rejects recent output for missing sessions', () => {
-    const db = createDatabase(':memory:');
-    const registry = new SessionRegistry(db);
-
-    expect(() => registry.appendOutput('missing-session', { role: 'assistant', text: 'orphan' })).toThrow('Session not found');
-    expect(registry.getRecentOutput('missing-session')).toEqual([]);
+    expect(registry.getEventsAfter(session.id, 0).map((event) => event.sequence)).toEqual([2, 3]);
   });
 });

@@ -1,7 +1,9 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
+import type { Project } from '../../shared/types';
 import type { RouteContext } from '../app';
-import { getWhitelistedHistory } from './historyRoutes';
+import { getAvailableHistory } from './historyRoutes';
+import { isAvailableProjectPath, projectPathFromHistoryId } from '../services/projectDiscovery';
 
 const createSessionSchema = z.object({
   projectId: z.string().min(1),
@@ -14,8 +16,12 @@ const resumeSessionSchema = z.object({
   title: z.string().min(1).default('Resumed session'),
 });
 
+const sessionParamsSchema = z.object({
+  sessionId: z.string().min(1),
+});
+
 const wsClientMessageSchema = z.discriminatedUnion('type', [
-  z.object({ type: z.literal('attach'), sessionId: z.string().min(1) }),
+  z.object({ type: z.literal('subscribe'), sessionId: z.string().min(1), afterSequence: z.number().int().optional() }),
   z.object({ type: z.literal('input'), sessionId: z.string().min(1), text: z.string() }),
   z.object({ type: z.literal('action'), sessionId: z.string().min(1), actionId: z.string().min(1) }),
 ]);
@@ -23,15 +29,15 @@ const wsClientMessageSchema = z.discriminatedUnion('type', [
 export function registerSessionRoutes(app: FastifyInstance, context: RouteContext): void {
   app.get('/api/projects/:projectId/sessions', async (request) => {
     const params = request.params as { projectId: string };
-    return context.sessions.listSessions(params.projectId);
+    return context.sessions.listRunningSessions(params.projectId);
   });
 
   app.post('/api/sessions', async (request, reply) => {
     const parsed = createSessionSchema.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: parsed.error.message });
 
-    const project = context.projects.getProject(parsed.data.projectId);
-    if (!project || !project.available) return reply.code(404).send({ error: 'Project not found' });
+    const project = resolveProject(context, parsed.data.projectId);
+    if (!project) return reply.code(404).send({ error: 'Project not found' });
 
     const session = context.sessions.createSession({
       projectId: project.id,
@@ -43,10 +49,10 @@ export function registerSessionRoutes(app: FastifyInstance, context: RouteContex
     try {
       context.runner.start({ sessionId: session.id, cwd: project.path, mode: parsed.data.mode });
       context.runner.onData(session.id, (data) => context.hub.handleOutput(session.id, data));
-      context.runner.onExit(session.id, () => context.hub.broadcastStatus(session.id, 'stopped'));
+      context.runner.onExit(session.id, (event) => context.hub.broadcastStatus(session.id, event.exitCode === 0 ? 'stopped' : 'failed'));
       context.hub.broadcastStatus(session.id, 'running');
     } catch (error) {
-      context.sessions.updateStatus(session.id, 'failed');
+      context.hub.broadcastStatus(session.id, 'failed');
       context.runner.stop(session.id);
       return reply.code(500).send({ error: errorMessage(error) });
     }
@@ -54,14 +60,27 @@ export function registerSessionRoutes(app: FastifyInstance, context: RouteContex
     return context.sessions.getSession(session.id);
   });
 
+  app.post('/api/sessions/:sessionId/stop', async (request, reply) => {
+    const parsed = sessionParamsSchema.safeParse(request.params);
+    if (!parsed.success) return reply.code(400).send({ error: parsed.error.message });
+
+    const session = context.sessions.getSession(parsed.data.sessionId);
+    if (!session) return reply.code(404).send({ error: 'Session not found' });
+
+    context.hub.broadcastStatus(session.id, 'stopping');
+    context.runner.stop(session.id);
+    context.hub.broadcastStatus(session.id, 'stopped');
+    return context.sessions.getSession(session.id);
+  });
+
   app.post('/api/sessions/resume', async (request, reply) => {
     const parsed = resumeSessionSchema.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: parsed.error.message });
 
-    const project = context.projects.getProject(parsed.data.projectId);
-    if (!project || !project.available) return reply.code(404).send({ error: 'Project not found' });
+    const project = resolveProject(context, parsed.data.projectId);
+    if (!project) return reply.code(404).send({ error: 'Project not found' });
 
-    const historySession = getWhitelistedHistory(context).find((session) => session.sessionId === parsed.data.claudeSessionId && session.projectPath === project.path);
+    const historySession = getAvailableHistory(context).find((session) => session.sessionId === parsed.data.claudeSessionId && session.projectPath === project.path);
     if (!historySession) return reply.code(404).send({ error: 'History session not found for project' });
 
     const session = context.sessions.createSession({
@@ -72,12 +91,13 @@ export function registerSessionRoutes(app: FastifyInstance, context: RouteContex
     });
 
     try {
+      seedHistoryBlocks(context, session.id, historySession);
       context.runner.start({ sessionId: session.id, cwd: project.path, mode: 'resume', claudeSessionId: parsed.data.claudeSessionId });
       context.runner.onData(session.id, (data) => context.hub.handleOutput(session.id, data));
-      context.runner.onExit(session.id, () => context.hub.broadcastStatus(session.id, 'stopped'));
+      context.runner.onExit(session.id, (event) => context.hub.broadcastStatus(session.id, event.exitCode === 0 ? 'stopped' : 'failed'));
       context.hub.broadcastStatus(session.id, 'running');
     } catch (error) {
-      context.sessions.updateStatus(session.id, 'failed');
+      context.hub.broadcastStatus(session.id, 'failed');
       context.runner.stop(session.id);
       return reply.code(500).send({ error: errorMessage(error) });
     }
@@ -99,9 +119,9 @@ export function registerSessionRoutes(app: FastifyInstance, context: RouteContex
         }
 
         const message = parsed.data;
-        if (message.type === 'attach') {
+        if (message.type === 'subscribe') {
           detach?.();
-          detach = context.hub.attach(message.sessionId, (serverMessage) => socket.send(JSON.stringify(serverMessage)));
+          detach = context.hub.subscribe({ sessionId: message.sessionId, afterSequence: message.afterSequence }, (serverMessage) => socket.send(JSON.stringify(serverMessage)));
           return;
         }
         if (message.type === 'input') {
@@ -118,6 +138,41 @@ export function registerSessionRoutes(app: FastifyInstance, context: RouteContex
 
     socket.on('close', () => detach?.());
   });
+}
+
+function seedHistoryBlocks(context: RouteContext, sessionId: string, historySession: ReturnType<typeof getAvailableHistory>[number]): void {
+  for (const block of historySession.blocks) {
+    context.sessions.appendBlock(sessionId, {
+      kind: block.kind,
+      text: block.text,
+      status: block.status,
+      source: 'history',
+      interaction: block.interaction,
+    });
+  }
+}
+
+function resolveProject(context: RouteContext, projectId: string): Project | null {
+  const whitelisted = context.projects.getProject(projectId);
+  if (whitelisted?.available) return whitelisted;
+
+  const historyPath = projectPathFromHistoryId(projectId);
+  if (!historyPath || !isAvailableProjectPath(historyPath)) return null;
+
+  const hasHistory = getAvailableHistory(context).some((session) => session.projectPath === historyPath);
+  if (!hasHistory) return null;
+
+  const now = new Date().toISOString();
+  return {
+    id: projectId,
+    name: historyPath.split('/').filter(Boolean).at(-1) ?? historyPath,
+    path: historyPath,
+    favorite: false,
+    available: true,
+    source: 'history',
+    createdAt: now,
+    updatedAt: now,
+  };
 }
 
 function errorMessage(error: unknown): string {

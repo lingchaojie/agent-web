@@ -11,7 +11,7 @@ export default function PromptActions({ interaction, disabled = false, onAction 
 
   return (
     <div className="prompt-actions">
-      <p className="eyebrow">Claude needs a decision</p>
+      <p className="eyebrow">Claude 需要你确认</p>
       <div className="prompt-action-grid">
         {interaction.actions.map((action) => (
           <button

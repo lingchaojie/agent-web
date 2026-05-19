@@ -24,7 +24,7 @@ export type RouteContext = {
 };
 
 export async function createApp(context: RouteContext) {
-  const app = Fastify({ logger: true });
+  const app = Fastify({ logger: true, routerOptions: { maxParamLength: 2048 } });
   await app.register(cors, { origin: true });
   await app.register(websocket);
 

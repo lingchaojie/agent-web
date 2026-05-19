@@ -1,15 +1,21 @@
+export type ProjectSource = 'whitelist' | 'history';
+
 export type Project = {
   id: string;
   name: string;
   path: string;
   favorite: boolean;
   available: boolean;
+  source: ProjectSource;
   createdAt: string;
   updatedAt: string;
 };
 
 export type SessionSource = 'web-created' | 'claude-history';
 export type SessionStatus = 'running' | 'stopped' | 'failed';
+export type SessionActivity = 'idle' | 'working' | 'stopped';
+export type SessionLifecycle = 'running' | 'idle' | 'waiting-for-input' | 'stopping' | 'stopped' | 'failed';
+export type SessionConnection = 'connecting' | 'connected' | 'reconnecting' | 'disconnected';
 
 export type ClaudeSession = {
   id: string;
@@ -19,14 +25,6 @@ export type ClaudeSession = {
   title: string;
   status: SessionStatus;
   lastActiveAt: string;
-  createdAt: string;
-};
-
-export type ChatMessage = {
-  id: string;
-  sessionId: string;
-  role: 'system' | 'user' | 'assistant' | 'tool';
-  text: string;
   createdAt: string;
 };
 
@@ -43,6 +41,51 @@ export type ParsedInteraction = {
   raw: string;
 };
 
+export type ConversationBlockKind = 'user' | 'assistant' | 'tool' | 'system' | 'interaction';
+export type ConversationBlockStatus = 'streaming' | 'final';
+export type ConversationBlockSource = 'live' | 'history';
+
+export type ConversationBlock = {
+  id: string;
+  sessionId: string;
+  kind: ConversationBlockKind;
+  text: string;
+  sequence: number;
+  status: ConversationBlockStatus;
+  createdAt: string;
+  updatedAt: string;
+  source: ConversationBlockSource;
+  interaction?: ParsedInteraction;
+};
+
+export type SessionViewState = {
+  sessionId: string;
+  projectId: string;
+  title: string;
+  lifecycle: SessionLifecycle;
+  activity: 'idle' | 'working' | 'stopped';
+  activityLabel?: string;
+  connection: SessionConnection;
+  latestSequence: number;
+  updatedAt: string;
+  pendingInteraction: ParsedInteraction | null;
+};
+
+export type SessionStreamState = {
+  session: SessionViewState | null;
+  blocks: ConversationBlock[];
+  latestSequence: number;
+};
+
+export type SessionStreamEvent =
+  | { type: 'snapshot'; sessionId: string; sequence: number; session: SessionViewState; blocks: ConversationBlock[] }
+  | { type: 'block-added'; sessionId: string; sequence: number; block: ConversationBlock }
+  | { type: 'block-updated'; sessionId: string; sequence: number; blockId: string; patch: Partial<Pick<ConversationBlock, 'text' | 'interaction' | 'updatedAt'>> }
+  | { type: 'block-finalized'; sessionId: string; sequence: number; blockId: string }
+  | { type: 'activity-changed'; sessionId: string; sequence: number; activity: SessionViewState['activity']; activityLabel?: string }
+  | { type: 'session-changed'; sessionId: string; sequence: number; patch: Partial<Omit<SessionViewState, 'sessionId'>> }
+  | { type: 'error'; sessionId?: string; sequence?: number; message: string };
+
 export type HistorySession = {
   projectKey: string;
   projectPath: string | null;
@@ -51,15 +94,12 @@ export type HistorySession = {
   title: string;
   lastMessage: string;
   updatedAt: string;
+  blocks: ConversationBlock[];
 };
 
 export type WsClientMessage =
-  | { type: 'attach'; sessionId: string }
+  | { type: 'subscribe'; sessionId: string; afterSequence?: number }
   | { type: 'input'; sessionId: string; text: string }
   | { type: 'action'; sessionId: string; actionId: string; input: string };
 
-export type WsServerMessage =
-  | { type: 'attached'; sessionId: string; status: SessionStatus; replay: ChatMessage[] }
-  | { type: 'output'; sessionId: string; message: ChatMessage; interaction: ParsedInteraction }
-  | { type: 'status'; sessionId: string; status: SessionStatus }
-  | { type: 'error'; sessionId?: string; message: string };
+export type WsServerMessage = SessionStreamEvent | { type: 'error'; sessionId?: string; message: string };

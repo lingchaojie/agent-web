@@ -72,6 +72,7 @@ function toProject(row: ProjectRow): Project {
     path: row.path,
     favorite: row.favorite === 1,
     available: isCanonicalAvailableDirectory(row.path),
+    source: 'whitelist',
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
