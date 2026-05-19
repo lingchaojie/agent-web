@@ -362,6 +362,7 @@ export class StreamJsonClaudeEventSource implements ClaudeEventSource {
 
   private writeInput(proc: ChildProcessWithoutNullStreams, text: string): void {
     proc.stdin.write(`${JSON.stringify({ type: 'user', message: { role: 'user', content: text }, parent_tool_use_id: null })}\n`);
+    proc.stdin.end();
   }
 
   private handleStdout(sessionId: string, chunk: string): void {

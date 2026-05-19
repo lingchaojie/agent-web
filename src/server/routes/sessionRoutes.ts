@@ -27,6 +27,8 @@ const wsClientMessageSchema = z.discriminatedUnion('type', [
 ]);
 
 export function registerSessionRoutes(app: FastifyInstance, context: RouteContext): void {
+  const pendingResumePrompts = new Map<string, string[]>();
+
   app.get('/api/projects/:projectId/sessions', async (request) => {
     const params = request.params as { projectId: string };
     return context.sessions.listRunningSessions(params.projectId);
@@ -48,10 +50,17 @@ export function registerSessionRoutes(app: FastifyInstance, context: RouteContex
 
     try {
       context.runner.start({ sessionId: session.id, cwd: project.path, mode: parsed.data.mode });
-      context.runner.onEvent(session.id, (event) => context.hub.handleClaudeEvent(session.id, event));
+      context.runner.onEvent(session.id, (event) => {
+        context.hub.handleClaudeEvent(session.id, event);
+        if (event.type === 'session-identity-observed') flushPendingResumePrompts(context, pendingResumePrompts, session.id, event.claudeSessionId);
+      });
       context.runner.onFallbackOutput(session.id, (data) => context.hub.handleOutput(session.id, data));
       context.runner.onExit(session.id, (event) => {
-        if (event.exitCode !== 0) context.hub.broadcastStatus(session.id, 'failed');
+        if (event.exitCode !== 0) {
+          context.hub.broadcastStatus(session.id, 'failed');
+          return;
+        }
+        normalizeTranscriptEntrypoint(context, session.id);
       });
       context.hub.broadcastStatus(session.id, 'running');
     } catch (error) {
@@ -99,10 +108,17 @@ export function registerSessionRoutes(app: FastifyInstance, context: RouteContex
     try {
       seedHistoryBlocks(context, session.id, historySession);
       context.runner.start({ sessionId: session.id, cwd: project.path, mode: 'resume', claudeSessionId: parsed.data.claudeSessionId });
-      context.runner.onEvent(session.id, (event) => context.hub.handleClaudeEvent(session.id, event));
+      context.runner.onEvent(session.id, (event) => {
+        context.hub.handleClaudeEvent(session.id, event);
+        if (event.type === 'session-identity-observed') flushPendingResumePrompts(context, pendingResumePrompts, session.id, event.claudeSessionId);
+      });
       context.runner.onFallbackOutput(session.id, (data) => context.hub.handleOutput(session.id, data));
       context.runner.onExit(session.id, (event) => {
-        if (event.exitCode !== 0) context.hub.broadcastStatus(session.id, 'failed');
+        if (event.exitCode !== 0) {
+          context.hub.broadcastStatus(session.id, 'failed');
+          return;
+        }
+        normalizeTranscriptEntrypoint(context, session.id);
       });
       context.hub.broadcastStatus(session.id, 'running');
     } catch (error) {
@@ -134,7 +150,7 @@ export function registerSessionRoutes(app: FastifyInstance, context: RouteContex
           return;
         }
         if (message.type === 'input') {
-          indexResumePrompt(context, message.sessionId, message.text);
+          indexResumePrompt(context, pendingResumePrompts, message.sessionId, message.text);
           context.hub.sendInput(message.sessionId, message.text);
           return;
         }
@@ -162,12 +178,38 @@ function seedHistoryBlocks(context: RouteContext, sessionId: string, historySess
   }
 }
 
-function indexResumePrompt(context: RouteContext, sessionId: string, text: string): void {
+function indexResumePrompt(context: RouteContext, pendingResumePrompts: Map<string, string[]>, sessionId: string, text: string): void {
+  const session = context.sessions.getSession(sessionId);
+  if (!session?.claudeSessionId) {
+    const pending = pendingResumePrompts.get(sessionId) ?? [];
+    pending.push(text);
+    pendingResumePrompts.set(sessionId, pending);
+    return;
+  }
+  recordResumePrompt(context, session.projectId, session.claudeSessionId, text);
+}
+
+function flushPendingResumePrompts(context: RouteContext, pendingResumePrompts: Map<string, string[]>, sessionId: string, claudeSessionId: string): void {
+  const pending = pendingResumePrompts.get(sessionId);
+  if (!pending?.length) return;
+  pendingResumePrompts.delete(sessionId);
+  const session = context.sessions.getSession(sessionId);
+  if (!session) return;
+  for (const prompt of pending) recordResumePrompt(context, session.projectId, claudeSessionId, prompt);
+}
+
+function recordResumePrompt(context: RouteContext, projectId: string, claudeSessionId: string, text: string): void {
+  const project = resolveProject(context, projectId);
+  if (!project) return;
+  context.resumeIndex.record({ projectPath: project.path, sessionId: claudeSessionId, prompt: text });
+}
+
+function normalizeTranscriptEntrypoint(context: RouteContext, sessionId: string): void {
   const session = context.sessions.getSession(sessionId);
   if (!session?.claudeSessionId) return;
   const project = resolveProject(context, session.projectId);
   if (!project) return;
-  context.resumeIndex.record({ projectPath: project.path, sessionId: session.claudeSessionId, prompt: text });
+  context.transcripts.normalizeEntrypoint({ projectPath: project.path, sessionId: session.claudeSessionId });
 }
 
 function resolveProject(context: RouteContext, projectId: string): Project | null {

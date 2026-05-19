@@ -200,16 +200,18 @@ describe('backend routes', () => {
 
     expect(response.statusCode).toBe(200);
     expect(context.hub.broadcastStatus).toHaveBeenCalledWith(session.id, 'failed');
+    expect(context.transcripts.normalizeEntrypoint).not.toHaveBeenCalled();
 
     await app.close();
   });
 
-  it('keeps sessions running when a structured print-mode turn exits successfully', async () => {
+  it('keeps sessions running and normalizes native transcripts when a structured print-mode turn exits successfully', async () => {
     const project = fakeProject({ id: 'project-1', path: root, available: true });
-    const session = fakeSession({ id: 'session-1', projectId: project.id, title: 'New session' });
+    const session = fakeSession({ id: 'session-1', projectId: project.id, claudeSessionId: 'native-session-1', title: 'New session' });
     const context = fakeContext();
     context.projects.getProject = vi.fn(() => project);
     context.sessions.createSession = vi.fn(() => session);
+    context.sessions.getSession = vi.fn(() => session);
     const app = await createApp(context);
 
     await app.inject({
@@ -223,6 +225,7 @@ describe('backend routes', () => {
 
     expect(context.hub.broadcastStatus).not.toHaveBeenCalledWith(session.id, 'stopped');
     expect(context.hub.broadcastStatus).not.toHaveBeenCalledWith(session.id, 'failed');
+    expect(context.transcripts.normalizeEntrypoint).toHaveBeenCalledWith({ projectPath: project.path, sessionId: 'native-session-1' });
 
     await app.close();
   });
@@ -506,6 +509,47 @@ describe('backend routes', () => {
       }),
     ]);
     expect(context.hub.sendInput).toHaveBeenCalledWith(session.id, '你好\n');
+
+    client.close();
+    await app.close();
+  });
+
+  it('indexes pending web prompts when native session identity arrives after input', async () => {
+    const project = fakeProject({ id: 'project-1', path: root, available: true });
+    const session = fakeSession({ id: 'session-1', projectId: project.id, claudeSessionId: null, status: 'running' });
+    const context = fakeContext({ claudeConfigDir: root });
+    context.resumeIndex = new ClaudeResumeIndex(root);
+    context.projects.getProject = vi.fn(() => project);
+    context.sessions.createSession = vi.fn(() => session);
+    context.sessions.getSession = vi.fn(() => session);
+    const app = await createApp(context);
+
+    await app.inject({
+      method: 'POST',
+      url: '/api/sessions',
+      headers: authHeaders(),
+      payload: { projectId: project.id, mode: 'new' },
+    });
+    await app.ready();
+    const client = await app.injectWS('/api/ws', { headers: { ...authHeaders(), host: 'localhost' } });
+    const onEvent = vi.mocked(context.runner.onEvent).mock.calls[0]?.[1];
+
+    client.send(JSON.stringify({ type: 'input', sessionId: session.id, text: 'first prompt\n' }));
+    await waitUntil(() => vi.mocked(context.hub.sendInput).mock.calls.length > 0);
+    expect(existsSync(join(root, 'history.jsonl'))).toBe(false);
+
+    onEvent?.({ type: 'session-identity-observed', sessionId: session.id, claudeSessionId: 'native-session-delayed', order: 1, createdAt: new Date().toISOString() });
+    await waitUntil(() => existsSync(join(root, 'history.jsonl')));
+
+    const lines = readFileSync(join(root, 'history.jsonl'), 'utf8').trim().split('\n').map((line) => JSON.parse(line));
+    expect(lines).toEqual([
+      expect.objectContaining({
+        display: 'first prompt',
+        project: project.path,
+        sessionId: 'native-session-delayed',
+      }),
+    ]);
+    expect(context.hub.handleClaudeEvent).toHaveBeenCalledWith(session.id, expect.objectContaining({ type: 'session-identity-observed' }));
 
     client.close();
     await app.close();
@@ -802,12 +846,16 @@ function fakeContext(overrides: Partial<RouteContext['config']> = {}): RouteCont
     } as unknown as RouteContext['runner'],
     hub: {
       subscribe: vi.fn(),
+      handleClaudeEvent: vi.fn(),
       handleOutput: vi.fn(),
       sendInput: vi.fn(),
       sendAction: vi.fn(),
       broadcastStatus: vi.fn(),
     } as unknown as RouteContext['hub'],
     resumeIndex: new ClaudeResumeIndex(root),
+    transcripts: {
+      normalizeEntrypoint: vi.fn(),
+    },
   };
 }
 

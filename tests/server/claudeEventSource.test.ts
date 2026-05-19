@@ -126,6 +126,18 @@ describe('claude structured event source', () => {
     expect(source.isRunning('web-session-1')).toBe(true);
   });
 
+  it('closes stream-json stdin after web input so Claude can flush resume metadata', () => {
+    const proc = fakeProcess();
+    const spawn = vi.fn(() => proc as any);
+    const source = new StreamJsonClaudeEventSource({ claudeBin: 'claude', spawn: spawn as any });
+    source.start({ sessionId: 'web-session-1', cwd: '/tmp/project', mode: 'new' });
+
+    source.sendInput('web-session-1', 'hello');
+
+    expect(proc.stdin.write).toHaveBeenCalledWith(expect.stringContaining('hello'));
+    expect(proc.stdin.end).toHaveBeenCalledOnce();
+  });
+
   it('starts a new stream-json process when sending a later turn after print-mode exit', () => {
     const first = fakeProcess();
     const second = fakeProcess();
@@ -183,12 +195,12 @@ function fakeProcess() {
   const proc = new EventEmitter() as EventEmitter & {
     stdout: EventEmitter;
     stderr: EventEmitter;
-    stdin: { write: ReturnType<typeof vi.fn> };
+    stdin: { write: ReturnType<typeof vi.fn>; end: ReturnType<typeof vi.fn> };
     kill: ReturnType<typeof vi.fn>;
   };
   proc.stdout = new EventEmitter();
   proc.stderr = new EventEmitter();
-  proc.stdin = { write: vi.fn() };
+  proc.stdin = { write: vi.fn(), end: vi.fn() };
   proc.kill = vi.fn();
   return proc;
 }

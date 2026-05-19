@@ -23,6 +23,9 @@ export type RouteContext = {
   runner: ClaudeEventSource;
   hub: RealtimeHub;
   resumeIndex: ClaudeResumeIndex;
+  transcripts: {
+    normalizeEntrypoint(input: { projectPath: string; sessionId: string }): void;
+  };
 };
 
 export async function createApp(context: RouteContext) {

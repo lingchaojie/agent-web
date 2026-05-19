@@ -44,7 +44,18 @@ The system SHALL append Claude Code-compatible history index entries for web pro
 
 #### Scenario: Native identity is not known yet
 - **WHEN** the user sends input before the web session has observed a native Claude session ID
-- **THEN** the server waits for a later indexed prompt rather than writing a history entry with the app session ID
+- **THEN** the server defers the prompt index entry and writes it with the native Claude session ID once that identity is observed
+
+### Requirement: Web prompt transcripts are visible in native resume picker
+The system SHALL keep successful web prompt-mode turns eligible for the local Claude Code `/resume` picker for the same project and native session.
+
+#### Scenario: Successful web prompt turn exits
+- **WHEN** a web-created or web-resumed prompt-mode turn exits successfully after the session has a native Claude session ID
+- **THEN** the system normalizes that native transcript's web prompt-mode entries so the local Claude Code `/resume` picker treats the session as a native interactive session
+
+#### Scenario: Web prompt turn fails
+- **WHEN** a web prompt-mode turn exits with a non-zero status
+- **THEN** the system does not normalize the native transcript for resume picker visibility
 
 ### Requirement: Native sync requires shared Claude config
 The system SHALL only claim native/web session synchronization when the web server and local Claude Code client use the same Claude configuration and transcript directory.
