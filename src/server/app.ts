@@ -10,6 +10,7 @@ import type { ProjectRegistry } from './services/projectRegistry';
 import type { SessionRegistry } from './services/sessionRegistry';
 import type { ClaudeEventSource } from './services/claudeEventSource';
 import type { RealtimeHub } from './services/realtimeHub';
+import type { ClaudeResumeIndex } from './services/claudeResumeIndex';
 import { registerAuthRoutes } from './routes/authRoutes';
 import { registerProjectRoutes } from './routes/projectRoutes';
 import { registerSessionRoutes } from './routes/sessionRoutes';
@@ -21,6 +22,7 @@ export type RouteContext = {
   sessions: SessionRegistry;
   runner: ClaudeEventSource;
   hub: RealtimeHub;
+  resumeIndex: ClaudeResumeIndex;
 };
 
 export async function createApp(context: RouteContext) {

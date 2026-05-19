@@ -134,6 +134,7 @@ export function registerSessionRoutes(app: FastifyInstance, context: RouteContex
           return;
         }
         if (message.type === 'input') {
+          indexResumePrompt(context, message.sessionId, message.text);
           context.hub.sendInput(message.sessionId, message.text);
           return;
         }
@@ -159,6 +160,14 @@ function seedHistoryBlocks(context: RouteContext, sessionId: string, historySess
       interaction: block.interaction,
     });
   }
+}
+
+function indexResumePrompt(context: RouteContext, sessionId: string, text: string): void {
+  const session = context.sessions.getSession(sessionId);
+  if (!session?.claudeSessionId) return;
+  const project = resolveProject(context, session.projectId);
+  if (!project) return;
+  context.resumeIndex.record({ projectPath: project.path, sessionId: session.claudeSessionId, prompt: text });
 }
 
 function resolveProject(context: RouteContext, projectId: string): Project | null {

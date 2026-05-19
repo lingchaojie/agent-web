@@ -1,8 +1,9 @@
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createApp, type RouteContext } from '../../src/server/app';
+import { ClaudeResumeIndex } from '../../src/server/services/claudeResumeIndex';
 import type { ClaudeSession, Project, WsServerMessage } from '../../src/shared/types';
 
 let root: string;
@@ -474,6 +475,42 @@ describe('backend routes', () => {
     await app.close();
   });
 
+  it('indexes web-created native sessions for Claude resume picker after first input', async () => {
+    const projectsRoot = join(root, 'projects');
+    const historyProjectRoot = join(projectsRoot, '-tmp-history-demo');
+    const discoveredProjectPath = join(root, 'history-demo');
+    mkdirSync(historyProjectRoot, { recursive: true });
+    mkdirSync(discoveredProjectPath, { recursive: true });
+    writeFileSync(join(historyProjectRoot, 'history-session.jsonl'), historyLine({ summary: 'History demo', cwd: discoveredProjectPath }));
+    const projectId = `history:${Buffer.from(discoveredProjectPath).toString('base64url')}`;
+    const session = fakeSession({ id: 'session-1', projectId, claudeSessionId: 'native-session-1', status: 'running' });
+    const context = fakeContext({ claudeConfigDir: root });
+    context.resumeIndex = new ClaudeResumeIndex(root);
+    context.projects.getProject = vi.fn(() => null);
+    context.projects.listProjects = vi.fn(() => []);
+    context.sessions.getSession = vi.fn(() => session);
+    const app = await createApp(context);
+    await app.ready();
+    const client = await app.injectWS('/api/ws', { headers: { ...authHeaders(), host: 'localhost' } });
+
+    client.send(JSON.stringify({ type: 'input', sessionId: session.id, text: '你好\n' }));
+    await waitUntil(() => existsSync(join(root, 'history.jsonl')));
+
+    const lines = readFileSync(join(root, 'history.jsonl'), 'utf8').trim().split('\n').map((line) => JSON.parse(line));
+    expect(lines).toEqual([
+      expect.objectContaining({
+        display: '你好',
+        project: discoveredProjectPath,
+        sessionId: 'native-session-1',
+        pastedContents: {},
+      }),
+    ]);
+    expect(context.hub.sendInput).toHaveBeenCalledWith(session.id, '你好\n');
+
+    client.close();
+    await app.close();
+  });
+
   it('seeds restored history blocks before starting a resumed session', async () => {
     const projectsRoot = join(root, 'projects');
     const projectRoot = join(projectsRoot, '-tmp-history-demo');
@@ -770,6 +807,7 @@ function fakeContext(overrides: Partial<RouteContext['config']> = {}): RouteCont
       sendAction: vi.fn(),
       broadcastStatus: vi.fn(),
     } as unknown as RouteContext['hub'],
+    resumeIndex: new ClaudeResumeIndex(root),
   };
 }
 

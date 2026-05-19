@@ -31,6 +31,21 @@ The system SHALL use the native Claude session ID to relate local Claude transcr
 - **WHEN** the web app receives a resume request for a native Claude session ID that is already associated with an app session
 - **THEN** the system reuses or returns the existing app session identity rather than seeding duplicate restored blocks into a new app session
 
+### Requirement: Web prompts update Claude resume picker history
+The system SHALL append Claude Code-compatible history index entries for web prompts after a web app session is associated with a native Claude session ID.
+
+#### Scenario: First web prompt after native identity is known
+- **WHEN** the user sends input in a web session whose native Claude session ID is known
+- **THEN** the server appends an entry to the shared Claude `history.jsonl` with the prompt display text, project path, timestamp, and native Claude session ID
+
+#### Scenario: Duplicate resume index entry
+- **WHEN** the same project, prompt display, and native Claude session ID have already been indexed
+- **THEN** the server does not append a duplicate history index entry
+
+#### Scenario: Native identity is not known yet
+- **WHEN** the user sends input before the web session has observed a native Claude session ID
+- **THEN** the server waits for a later indexed prompt rather than writing a history entry with the app session ID
+
 ### Requirement: Native sync requires shared Claude config
 The system SHALL only claim native/web session synchronization when the web server and local Claude Code client use the same Claude configuration and transcript directory.
 
