@@ -18,21 +18,12 @@ const project: Project = {
 describe('SessionList', () => {
   it('shows a stop action for running sessions', () => {
     const onStop = vi.fn();
-    const session = {
-      id: 'session-1',
-      projectId: project.id,
-      source: 'web-created' as const,
-      claudeSessionId: null,
-      title: 'Running session',
-      status: 'running' as const,
-      lastActiveAt: '2026-01-01T00:00:00.000Z',
-      createdAt: '2026-01-01T00:00:00.000Z',
-    };
+    const runningSession = session();
 
     render(
       <SessionList
         project={project}
-        sessions={[session]}
+        sessions={[runningSession]}
         history={[]}
         loading={false}
         selectedSessionId={null}
@@ -48,7 +39,35 @@ describe('SessionList', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /关闭 Running session/i }));
 
-    expect(onStop).toHaveBeenCalledWith(session);
+    expect(onStop).toHaveBeenCalledWith(runningSession);
+  });
+
+  it('labels external tmux sessions with a detach action', () => {
+    const onStop = vi.fn();
+    const tmuxSession = session({ source: 'external-tmux', title: 'tmux Claude', externalPaneId: '%12' });
+
+    render(
+      <SessionList
+        project={project}
+        sessions={[tmuxSession]}
+        history={[]}
+        loading={false}
+        selectedSessionId={null}
+        onNew={vi.fn()}
+        onContinue={vi.fn()}
+        onResume={vi.fn()}
+        onOpen={vi.fn()}
+        onOpenHistory={vi.fn()}
+        onStop={onStop}
+        onBackToProjects={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText(/external tmux · %12/i)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /断开 tmux Claude/i }));
+
+    expect(onStop).toHaveBeenCalledWith(tmuxSession);
   });
 
   it('shows the first 20 history sessions by default and loads 20 more', () => {

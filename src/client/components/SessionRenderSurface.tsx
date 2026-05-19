@@ -36,10 +36,10 @@ function RenderRegionView({ region, disabled, onAction }: { region: RenderRegion
     );
   }
 
-  if (region.kind === 'tool') {
-    const title = region.text.split(/\r?\n/)[0]?.trim() || 'Tool';
+  if (region.kind === 'tool' || region.kind === 'system') {
+    const title = collapsedRegionTitle(region.kind, region.text);
     return (
-      <details className="cli-region tool tool-message" data-region-id={region.id} data-render-kind="tool" data-render-status={region.status}>
+      <details className={`cli-region ${region.kind} tool-message`} data-region-id={region.id} data-render-kind={region.kind} data-render-status={region.status}>
         <summary>{title}</summary>
         <pre>{region.text}</pre>
       </details>
@@ -59,4 +59,11 @@ function statusLabel(render: SessionRenderState): string {
   if (render.transientStatus.activity === 'working') return 'Claude 正在处理…';
   if (render.transcriptSource === 'pty-fallback') return 'PTY fallback';
   return 'structured';
+}
+
+function collapsedRegionTitle(kind: RenderRegion['kind'], text: string): string {
+  const first = text.split(/\r?\n/)[0]?.trim();
+  if (kind === 'tool') return first ? `工具调用 · ${first}` : '工具调用';
+  if (kind === 'system') return first ? `系统信息 · ${first}` : '系统信息';
+  return first || kind;
 }

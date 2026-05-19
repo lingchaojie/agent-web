@@ -30,6 +30,11 @@ export function registerSessionRoutes(app: FastifyInstance, context: RouteContex
   const pendingResumePrompts = new Map<string, string[]>();
 
   app.get('/api/projects/:projectId/sessions', async (request) => {
+    try {
+      await context.tmuxSync?.refresh();
+    } catch {
+      // Keep existing sessions visible if tmux disappears between requests.
+    }
     const params = request.params as { projectId: string };
     return context.sessions.listRunningSessions(params.projectId);
   });
@@ -78,6 +83,10 @@ export function registerSessionRoutes(app: FastifyInstance, context: RouteContex
 
     const session = context.sessions.getSession(parsed.data.sessionId);
     if (!session) return reply.code(404).send({ error: 'Session not found' });
+
+    if (session.source === 'external-tmux') {
+      return context.hub.disconnectExternalSession(session.id);
+    }
 
     context.hub.broadcastStatus(session.id, 'stopping');
     context.runner.stop(session.id);
@@ -134,7 +143,7 @@ export function registerSessionRoutes(app: FastifyInstance, context: RouteContex
     let detach: (() => void) | null = null;
     const sendError = (message: string, sessionId?: string) => socket.send(JSON.stringify({ type: 'error', sessionId, message }));
 
-    socket.on('message', (raw: Buffer) => {
+    socket.on('message', async (raw: Buffer) => {
       try {
         const decoded: unknown = JSON.parse(raw.toString());
         const parsed = wsClientMessageSchema.safeParse(decoded);
@@ -150,11 +159,24 @@ export function registerSessionRoutes(app: FastifyInstance, context: RouteContex
           return;
         }
         if (message.type === 'input') {
+          const session = context.sessions.getSession(message.sessionId);
+          if (session?.source === 'external-tmux') {
+            await context.tmuxSync?.sendInput(message.sessionId, message.text);
+            context.hub.sendExternalInput(message.sessionId, message.text);
+            return;
+          }
           indexResumePrompt(context, pendingResumePrompts, message.sessionId, message.text);
           context.hub.sendInput(message.sessionId, message.text);
           return;
         }
         if (message.type === 'action') {
+          const session = context.sessions.getSession(message.sessionId);
+          if (session?.source === 'external-tmux') {
+            const input = context.hub.resolveActionInput(message.sessionId, message.actionId);
+            await context.tmuxSync?.sendInput(message.sessionId, input);
+            context.hub.sendExternalInput(message.sessionId, input);
+            return;
+          }
           context.hub.sendAction(message.sessionId, message.actionId);
         }
       } catch (error) {

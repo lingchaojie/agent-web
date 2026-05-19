@@ -317,7 +317,8 @@ textarea:focus {
 .status-chip.running,
 .connection-chip.connected,
 .activity-chip.idle,
-.source-chip.structured {
+.source-chip.structured,
+.source-chip.tmux-capture {
   color: var(--success);
   background: var(--success-bg);
   border-color: #c0dfd3;

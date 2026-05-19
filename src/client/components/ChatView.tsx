@@ -166,11 +166,11 @@ export default function ChatView({ session, transcript, transcriptLoadingOlder =
         </div>
         <div className="chat-status-actions">
           <span className={`activity-chip ${lifecycle === 'failed' ? 'failed' : activity}`} data-status-transition={prefersReducedMotion() ? 'reduced' : 'animated'}>{activityLabel(activity, lifecycle)}</span>
-          <span className={`source-chip ${streamState.session?.transcriptSource === 'pty-fallback' ? 'degraded' : 'structured'}`}>{sourceLabel(streamState.session?.transcriptSource)}</span>
+          <span className={`source-chip ${sourceClass(streamState.session?.transcriptSource)}`}>{sourceLabel(streamState.session?.transcriptSource)}</span>
           <span className={`connection-chip ${connectionState}`}>{connectionState}</span>
           {isClaudeSession(session) ? (
             <button className="secondary-button compact danger-button" type="button" onClick={() => onStop(session)} disabled={session.status !== 'running'}>
-              停止
+              {session.source === 'external-tmux' ? '断开' : '停止'}
             </button>
           ) : null}
         </div>
@@ -212,13 +212,19 @@ function isClaudeSession(session: DisplaySession): session is ClaudeSession {
 function activityLabel(activity: SessionActivity, lifecycle: SessionViewState['lifecycle'] | null): string {
   if (lifecycle === 'failed') return '失败';
   if (lifecycle === 'degraded-fallback') return '降级模式';
+  if (lifecycle === 'disconnected') return '已断开';
   if (activity === 'working') return '工作中';
   if (activity === 'idle') return '等待输入';
   return '已停止';
 }
 
 function sourceLabel(source: SessionViewState['transcriptSource'] | undefined): string {
+  if (source === 'tmux-capture') return 'tmux capture';
   return source === 'pty-fallback' ? 'PTY fallback' : 'structured';
+}
+
+function sourceClass(source: SessionViewState['transcriptSource'] | undefined): string {
+  return source === 'pty-fallback' ? 'degraded' : source ?? 'structured';
 }
 
 function prefersReducedMotion(): boolean {
@@ -288,5 +294,6 @@ function latestInteraction(blocks: ConversationBlock[]): ParsedInteraction | nul
 
 function statusFromLifecycle(lifecycle: SessionViewState['lifecycle']): SessionStatus | null {
   if (lifecycle === 'running' || lifecycle === 'stopped' || lifecycle === 'failed') return lifecycle;
+  if (lifecycle === 'disconnected') return 'stopped';
   return null;
 }

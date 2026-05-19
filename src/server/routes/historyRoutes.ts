@@ -16,7 +16,12 @@ export function registerHistoryRoutes(app: FastifyInstance, context: RouteContex
     const history = getAvailableHistory(context).find((session) => session.sessionId === params.sessionId);
     if (!history?.projectPath) return reply.code(404).send({ error: 'History session not found' });
 
-    const window = readClaudeTranscriptWindow(projectsRoot(context), { sessionId: params.sessionId, limit: parseLimit(query.limit), before: query.before });
+    const window = readClaudeTranscriptWindow(projectsRoot(context), {
+      sessionId: params.sessionId,
+      limit: parseLimit(query.limit),
+      before: query.before,
+      claudeConfigDir: context.config.claudeConfigDir,
+    });
     if (!window) return reply.code(404).send({ error: 'Transcript not found' });
     return window;
   });
@@ -27,7 +32,12 @@ export function registerHistoryRoutes(app: FastifyInstance, context: RouteContex
     const session = context.sessions.getSession(params.sessionId);
     if (!session?.claudeSessionId) return reply.code(404).send({ error: 'Transcript not found' });
 
-    const window = readClaudeTranscriptWindow(projectsRoot(context), { sessionId: session.claudeSessionId, limit: parseLimit(query.limit), before: query.before });
+    const window = readClaudeTranscriptWindow(projectsRoot(context), {
+      sessionId: session.claudeSessionId,
+      limit: parseLimit(query.limit),
+      before: query.before,
+      claudeConfigDir: context.config.claudeConfigDir,
+    });
     if (!window?.projectPath || window.projectPath !== resolveSessionProjectPath(context, session.projectId)) return reply.code(404).send({ error: 'Transcript not found' });
     return window;
   });
@@ -72,7 +82,7 @@ export function registerHistoryRoutes(app: FastifyInstance, context: RouteContex
 }
 
 export function getAvailableHistory(context: RouteContext): HistorySession[] {
-  return readClaudeHistory(projectsRoot(context))
+  return readClaudeHistory(projectsRoot(context), { claudeConfigDir: context.config.claudeConfigDir })
     .filter((session) => session.projectPath !== null && isAvailableProjectPath(session.projectPath))
     .map((session) => {
       const appSession = context.sessions.findByClaudeSessionId(session.sessionId) ?? undefined;

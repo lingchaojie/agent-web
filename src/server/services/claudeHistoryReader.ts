@@ -2,6 +2,7 @@ import { existsSync, lstatSync, readdirSync, readFileSync, statSync } from 'node
 import { join } from 'node:path';
 import type { ConversationBlock, HistorySession, RenderRegion, TranscriptWindow } from '../../shared/types';
 import { mapClaudeJsonlEntryToSemantic, type ClaudeJsonlEntry } from './claudeSemanticMapper';
+import { ClaudeResumeTitleReader } from './claudeResumeTitleReader';
 
 type ParsedLine = ClaudeJsonlEntry & {
   summary?: string;
@@ -10,8 +11,10 @@ type ParsedLine = ClaudeJsonlEntry & {
 
 export const MAX_TRANSCRIPT_BYTES = 5 * 1024 * 1024;
 
-export function readClaudeHistory(projectsRoot: string): HistorySession[] {
+export function readClaudeHistory(projectsRoot: string, options: { claudeConfigDir?: string } = {}): HistorySession[] {
   if (!existsSync(projectsRoot)) return [];
+
+  const titleReader = options.claudeConfigDir ? new ClaudeResumeTitleReader(options.claudeConfigDir) : null;
 
   let projectEntries;
   try {
@@ -43,7 +46,7 @@ export function readClaudeHistory(projectsRoot: string): HistorySession[] {
           if (!fileName.endsWith('.jsonl')) continue;
           const transcriptPath = join(projectDir, fileName);
           if (lstatSync(transcriptPath).isSymbolicLink()) continue;
-          const session = readTranscript(projectKey, transcriptPath);
+          const session = readTranscript(projectKey, transcriptPath, titleReader);
           if (session) sessions.push(session);
         } catch {
           continue;
@@ -62,10 +65,14 @@ export function projectKeyToPath(projectKey: string): string | null {
   return projectKey.replace(/-/g, '/');
 }
 
-export function readClaudeTranscriptWindow(projectsRoot: string, input: { sessionId: string; limit?: number; before?: string }): TranscriptWindow | null {
+export function readClaudeTranscriptWindow(projectsRoot: string, input: { sessionId: string; limit?: number; before?: string; claudeConfigDir?: string }): TranscriptWindow | null {
   const located = findTranscript(projectsRoot, input.sessionId);
   if (!located) return null;
-  const session = readTranscript(located.projectKey, located.transcriptPath);
+  const session = readTranscript(
+    located.projectKey,
+    located.transcriptPath,
+    input.claudeConfigDir ? new ClaudeResumeTitleReader(input.claudeConfigDir) : null,
+  );
   if (!session) return null;
 
   const limit = Math.max(1, Math.min(input.limit ?? 50, 200));
@@ -86,7 +93,7 @@ export function readClaudeTranscriptWindow(projectsRoot: string, input: { sessio
   };
 }
 
-function readTranscript(projectKey: string, transcriptPath: string): HistorySession | null {
+function readTranscript(projectKey: string, transcriptPath: string, titleReader: ClaudeResumeTitleReader | null): HistorySession | null {
   try {
     const sessionId = transcriptPath.split('/').at(-1)?.replace(/\.jsonl$/, '');
     if (!sessionId) return null;
@@ -97,6 +104,7 @@ function readTranscript(projectKey: string, transcriptPath: string): HistorySess
     const raw = readFileSync(transcriptPath, 'utf8');
     const lines = raw.split('\n').filter(Boolean);
     let title = 'Untitled session';
+    let summary = '';
     let lastMessage = '';
     let updatedAt = stat.mtime.toISOString();
     let cwd: string | null = null;
@@ -108,7 +116,7 @@ function readTranscript(projectKey: string, transcriptPath: string): HistorySess
 
       if (parsed.timestamp) updatedAt = parsed.timestamp;
       if (parsed.cwd) cwd = parsed.cwd;
-      if (parsed.type === 'summary' && parsed.summary) title = parsed.summary;
+      if (parsed.type === 'summary' && parsed.summary) summary = parsed.summary;
 
       const parts = mapClaudeJsonlEntryToSemantic(parsed);
       for (const part of parts) {
@@ -128,6 +136,12 @@ function readTranscript(projectKey: string, transcriptPath: string): HistorySess
         });
       }
     }
+
+    title = titleReader?.titleFor({
+      projectPath: cwd ?? projectKeyToPath(projectKey),
+      sessionId,
+      summary,
+    }) ?? (summary || title);
 
     return {
       projectKey,

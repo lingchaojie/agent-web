@@ -21,6 +21,9 @@ type SessionRow = {
   project_id: string;
   source: SessionSource;
   claude_session_id: string | null;
+  external_key: string | null;
+  external_pane_id: string | null;
+  external_cwd: string | null;
   title: string;
   status: SessionStatus;
   last_active_at: string;
@@ -76,6 +79,9 @@ export class SessionRegistry {
       project_id: input.projectId,
       source: input.source,
       claude_session_id: input.claudeSessionId,
+      external_key: null,
+      external_pane_id: null,
+      external_cwd: null,
       title: input.title,
       status: 'stopped',
       last_active_at: now,
@@ -83,8 +89,8 @@ export class SessionRegistry {
     };
 
     this.db.prepare(`
-      INSERT INTO sessions (id, project_id, source, claude_session_id, title, status, last_active_at, created_at)
-      VALUES (@id, @project_id, @source, @claude_session_id, @title, @status, @last_active_at, @created_at)
+      INSERT INTO sessions (id, project_id, source, claude_session_id, external_key, external_pane_id, external_cwd, title, status, last_active_at, created_at)
+      VALUES (@id, @project_id, @source, @claude_session_id, @external_key, @external_pane_id, @external_cwd, @title, @status, @last_active_at, @created_at)
     `).run(row);
 
     return toSession(row);
@@ -104,6 +110,11 @@ export class SessionRegistry {
     return rows.map(toSession);
   }
 
+  listExternalSessions(): ClaudeSession[] {
+    const rows = this.db.prepare("SELECT * FROM sessions WHERE source = 'external-tmux' ORDER BY last_active_at DESC").all() as SessionRow[];
+    return rows.map(toSession);
+  }
+
   stopRunningSessions(): void {
     const now = new Date().toISOString();
     this.db.prepare("UPDATE sessions SET status = 'stopped', last_active_at = ? WHERE status = 'running'").run(now);
@@ -119,11 +130,82 @@ export class SessionRegistry {
     return row ? toSession(row) : null;
   }
 
+  findByExternalKey(externalKey: string): ClaudeSession | null {
+    const row = this.db.prepare('SELECT * FROM sessions WHERE external_key = ? LIMIT 1').get(externalKey) as SessionRow | undefined;
+    return row ? toSession(row) : null;
+  }
+
   updateClaudeSessionId(id: string, claudeSessionId: string): ClaudeSession {
     const now = new Date().toISOString();
     this.db.prepare('UPDATE sessions SET claude_session_id = ?, last_active_at = ? WHERE id = ?').run(claudeSessionId, now, id);
     const session = this.getSession(id);
     if (!session) throw new Error('Session not found');
+    return session;
+  }
+
+  upsertExternalSession(input: { projectId: string; externalKey: string; title: string; cwd: string; paneId: string; claudeSessionId?: string | null }): ClaudeSession {
+    const now = new Date().toISOString();
+    const existing = this.findByExternalKey(input.externalKey);
+    if (!existing) {
+      const row: SessionRow = {
+        id: randomUUID(),
+        project_id: input.projectId,
+        source: 'external-tmux',
+        claude_session_id: input.claudeSessionId ?? null,
+        external_key: input.externalKey,
+        external_pane_id: input.paneId,
+        external_cwd: input.cwd,
+        title: input.title,
+        status: 'running',
+        last_active_at: now,
+        created_at: now,
+      };
+      this.db.prepare(`
+        INSERT INTO sessions (id, project_id, source, claude_session_id, external_key, external_pane_id, external_cwd, title, status, last_active_at, created_at)
+        VALUES (@id, @project_id, @source, @claude_session_id, @external_key, @external_pane_id, @external_cwd, @title, @status, @last_active_at, @created_at)
+      `).run(row);
+      this.updateSessionView(row.id, { lifecycle: 'running', activity: 'idle', transcriptSource: 'tmux-capture' });
+      return this.getSession(row.id)!;
+    }
+
+    this.db.prepare(`
+      UPDATE sessions
+      SET project_id = @projectId,
+          claude_session_id = @claudeSessionId,
+          external_pane_id = @paneId,
+          external_cwd = @cwd,
+          title = @title,
+          status = 'running',
+          last_active_at = @now
+      WHERE id = @id
+    `).run({
+      id: existing.id,
+      projectId: input.projectId,
+      claudeSessionId: input.claudeSessionId ?? existing.claudeSessionId,
+      paneId: input.paneId,
+      cwd: input.cwd,
+      title: input.title,
+      now,
+    });
+    this.updateSessionView(existing.id, { lifecycle: 'running', activity: 'idle', transcriptSource: 'tmux-capture' });
+    return this.getSession(existing.id)!;
+  }
+
+  markExternalDisconnected(id: string): ClaudeSession {
+    const now = new Date().toISOString();
+    this.db.prepare("UPDATE sessions SET status = 'stopped', last_active_at = ? WHERE id = ? AND source = 'external-tmux'").run(now, id);
+    this.updateSessionView(id, { lifecycle: 'disconnected', activity: 'stopped', transcriptSource: 'tmux-capture' });
+    const session = this.getSession(id);
+    if (!session) throw new Error('Session not found');
+    return session;
+  }
+
+  updateTitle(id: string, title: string): ClaudeSession {
+    const now = new Date().toISOString();
+    this.db.prepare('UPDATE sessions SET title = ?, last_active_at = ? WHERE id = ?').run(title, now, id);
+    const session = this.getSession(id);
+    if (!session) throw new Error('Session not found');
+    this.updateSessionView(id, { lifecycle: session.status === 'running' ? 'running' : 'stopped' });
     return session;
   }
 
@@ -300,6 +382,9 @@ function toSession(row: SessionRow): ClaudeSession {
     projectId: row.project_id,
     source: row.source,
     claudeSessionId: row.claude_session_id,
+    externalKey: row.external_key ?? undefined,
+    externalPaneId: row.external_pane_id ?? undefined,
+    externalCwd: row.external_cwd ?? undefined,
     title: row.title,
     status: row.status,
     lastActiveAt: row.last_active_at,

@@ -87,10 +87,14 @@ export default function App() {
       const [nextProjects, nextHistory] = await Promise.all([listProjects(), listHistory()]);
       setProjects(nextProjects);
       setHistory(nextHistory);
-      setSelectedProjectId((current) => {
-        if (current && nextProjects.some((project) => project.id === current)) return current;
-        return nextProjects.find((project) => project.available)?.id ?? nextProjects[0]?.id ?? null;
-      });
+      const nextSelectedProjectId = selectedProjectId && nextProjects.some((project) => project.id === selectedProjectId)
+        ? selectedProjectId
+        : nextProjects.find((project) => project.available)?.id ?? nextProjects[0]?.id ?? null;
+      setSelectedProjectId(nextSelectedProjectId);
+      if (nextSelectedProjectId && nextSelectedProjectId === selectedProjectId) {
+        void refreshSessions(nextSelectedProjectId);
+        void refreshSlashCommands(nextSelectedProjectId);
+      }
     } catch (err) {
       setError(errorMessage(err));
     } finally {

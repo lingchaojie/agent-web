@@ -1,4 +1,4 @@
-import type { ConversationBlockKind, ConversationBlockSource, ConversationBlockStatus, ParsedInteraction, SessionActivity } from '../../shared/types';
+import type { ConversationBlockKind, ConversationBlockSource, ConversationBlockStatus, ParsedInteraction, SessionActivity, SessionLifecycle } from '../../shared/types';
 import type { ClaudeSemanticEvent } from './claudeEventSource';
 
 export type SemanticBlockPart = {
@@ -20,7 +20,7 @@ export type SemanticMappingResult = {
   block?: SemanticBlockPart;
   activity?: SemanticActivityPart;
   finalizeMessageId?: string;
-  lifecycle?: 'running' | 'idle' | 'waiting-for-input' | 'stopping' | 'stopped' | 'failed' | 'degraded-fallback';
+  lifecycle?: SessionLifecycle;
   ignored?: boolean;
 };
 
@@ -114,7 +114,21 @@ function extractContentPart(role: string | undefined, part: unknown, entry: Clau
   if (!part || typeof part !== 'object') return [];
   const type = 'type' in part && typeof part.type === 'string' ? part.type : '';
 
-  if (type === 'tool_use' || type === 'tool_result' || type === 'thinking') return [];
+  if (type === 'tool_use') {
+    const name = 'name' in part && typeof part.name === 'string' ? part.name : 'Tool';
+    const input = 'input' in part ? part.input : undefined;
+    return textToBlockParts('tool', toolText(name, input), entry);
+  }
+
+  if (type === 'tool_result') {
+    const content = 'content' in part ? part.content : '';
+    return textToBlockParts('tool', ['Tool result', extractText(content)].filter(Boolean).join('\n'), entry);
+  }
+
+  if (type === 'thinking') {
+    const thinking = 'thinking' in part && typeof part.thinking === 'string' ? part.thinking : extractText(part);
+    return textToBlockParts('system', ['Thinking', thinking].filter(Boolean).join('\n'), entry);
+  }
 
   const kind = messageRoleToBlockKind(role);
   if (!kind) return [];

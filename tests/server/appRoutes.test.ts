@@ -236,6 +236,66 @@ describe('backend routes', () => {
     await app.close();
   });
 
+  it('refreshes tmux sync before listing project sessions', async () => {
+    const project = fakeProject({ id: 'project-1', path: root, available: true });
+    const liveSession = fakeSession({ id: 'session-1', projectId: project.id, status: 'running' });
+    const context = fakeContext();
+    context.projects.getProject = vi.fn(() => project);
+    context.sessions.listRunningSessions = vi.fn(() => [liveSession]);
+    context.tmuxSync = { refresh: vi.fn(async () => undefined), sendInput: vi.fn(async () => undefined) };
+    const app = await createApp(context);
+
+    const response = await app.inject({ method: 'GET', url: `/api/projects/${project.id}/sessions`, headers: authHeaders() });
+
+    expect(response.statusCode).toBe(200);
+    const refreshOrder = vi.mocked(context.tmuxSync.refresh).mock.invocationCallOrder[0];
+    const listOrder = vi.mocked(context.sessions.listRunningSessions).mock.invocationCallOrder[0];
+    expect(refreshOrder).toBeLessThan(listOrder);
+    expect(response.json()).toEqual([expect.objectContaining({ id: liveSession.id })]);
+
+    await app.close();
+  });
+
+  it('still lists project sessions when tmux refresh fails', async () => {
+    const project = fakeProject({ id: 'project-1', path: root, available: true });
+    const liveSession = fakeSession({ id: 'session-1', projectId: project.id, status: 'running' });
+    const context = fakeContext();
+    context.projects.getProject = vi.fn(() => project);
+    context.sessions.listRunningSessions = vi.fn(() => [liveSession]);
+    context.tmuxSync = { refresh: vi.fn(async () => { throw new Error('tmux disappeared'); }), sendInput: vi.fn(async () => undefined) };
+    const app = await createApp(context);
+
+    const response = await app.inject({ method: 'GET', url: `/api/projects/${project.id}/sessions`, headers: authHeaders() });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual([expect.objectContaining({ id: liveSession.id })]);
+
+    await app.close();
+  });
+
+  it('detaches external tmux sessions without stopping the runner', async () => {
+    const session = fakeSession({ id: 'session-1', status: 'running', source: 'external-tmux', externalKey: 'tmux:socket:%1', externalPaneId: '%1' });
+    const disconnected = { ...session, status: 'stopped' as const };
+    const context = fakeContext();
+    context.sessions.getSession = vi.fn(() => session);
+    context.hub.disconnectExternalSession = vi.fn(() => disconnected);
+    const app = await createApp(context);
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/api/sessions/${session.id}/stop`,
+      headers: authHeaders(),
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(context.hub.disconnectExternalSession).toHaveBeenCalledWith(session.id);
+    expect(context.runner.stop).not.toHaveBeenCalled();
+    expect(context.hub.broadcastStatus).not.toHaveBeenCalledWith(session.id, 'stopping');
+    expect(response.json()).toEqual(expect.objectContaining({ id: session.id, status: 'stopped' }));
+
+    await app.close();
+  });
+
   it('marks new sessions failed when runner startup fails', async () => {
     const project = fakeProject({ id: 'project-1', path: root, available: true });
     const session = fakeSession({ id: 'session-1', projectId: project.id, title: 'New session' });
@@ -687,6 +747,52 @@ describe('backend routes', () => {
     await app.close();
   });
 
+  it('routes external tmux websocket input through tmux sync and external echo', async () => {
+    const session = fakeSession({ id: 'session-1', source: 'external-tmux', status: 'running', externalKey: 'tmux:socket:%1', externalPaneId: '%1' });
+    const context = fakeContext();
+    context.sessions.getSession = vi.fn(() => session);
+    context.tmuxSync = { refresh: vi.fn(async () => undefined), sendInput: vi.fn(async () => undefined) };
+    context.hub.sendExternalInput = vi.fn();
+    const app = await createApp(context);
+    await app.ready();
+    const client = await app.injectWS('/api/ws', { headers: { ...authHeaders(), host: 'localhost' } });
+
+    client.send(JSON.stringify({ type: 'input', sessionId: session.id, text: 'hello' }));
+    await waitUntil(() => vi.mocked(context.hub.sendInput).mock.calls.length > 0 || vi.mocked(context.tmuxSync!.sendInput).mock.calls.length > 0);
+
+    expect(context.tmuxSync.sendInput).toHaveBeenCalledWith(session.id, 'hello');
+    expect(context.hub.sendExternalInput).toHaveBeenCalledWith(session.id, 'hello');
+    expect(context.hub.sendInput).not.toHaveBeenCalled();
+    expect(context.runner.sendInput).not.toHaveBeenCalled();
+
+    client.close();
+    await app.close();
+  });
+
+  it('routes external tmux websocket actions through resolved tmux input and external echo', async () => {
+    const session = fakeSession({ id: 'session-1', source: 'external-tmux', status: 'running', externalKey: 'tmux:socket:%1', externalPaneId: '%1' });
+    const context = fakeContext();
+    context.sessions.getSession = vi.fn(() => session);
+    context.tmuxSync = { refresh: vi.fn(async () => undefined), sendInput: vi.fn(async () => undefined) };
+    context.hub.resolveActionInput = vi.fn(() => '2');
+    context.hub.sendExternalInput = vi.fn();
+    const app = await createApp(context);
+    await app.ready();
+    const client = await app.injectWS('/api/ws', { headers: { ...authHeaders(), host: 'localhost' } });
+
+    client.send(JSON.stringify({ type: 'action', sessionId: session.id, actionId: 'choice-2' }));
+    await waitUntil(() => vi.mocked(context.hub.sendAction).mock.calls.length > 0 || vi.mocked(context.tmuxSync!.sendInput).mock.calls.length > 0);
+
+    expect(context.hub.resolveActionInput).toHaveBeenCalledWith(session.id, 'choice-2');
+    expect(context.tmuxSync.sendInput).toHaveBeenCalledWith(session.id, '2');
+    expect(context.hub.sendExternalInput).toHaveBeenCalledWith(session.id, '2');
+    expect(context.hub.sendAction).not.toHaveBeenCalled();
+    expect(context.runner.sendInput).not.toHaveBeenCalled();
+
+    client.close();
+    await app.close();
+  });
+
   it('indexes pending web prompts when native session identity arrives after input', async () => {
     const project = fakeProject({ id: 'project-1', path: root, available: true });
     const session = fakeSession({ id: 'session-1', projectId: project.id, claudeSessionId: null, status: 'running' });
@@ -1007,6 +1113,7 @@ function fakeContext(overrides: Partial<RouteContext['config']> = {}): RouteCont
       findByClaudeSessionId: vi.fn(() => null),
       appendBlock: vi.fn(),
       updateStatus: vi.fn(),
+      markExternalDisconnected: vi.fn(),
     } as unknown as RouteContext['sessions'],
     runner: {
       start: vi.fn(),
@@ -1023,6 +1130,9 @@ function fakeContext(overrides: Partial<RouteContext['config']> = {}): RouteCont
       handleOutput: vi.fn(),
       sendInput: vi.fn(),
       sendAction: vi.fn(),
+      resolveActionInput: vi.fn(),
+      sendExternalInput: vi.fn(),
+      disconnectExternalSession: vi.fn(),
       broadcastStatus: vi.fn(),
     } as unknown as RouteContext['hub'],
     resumeIndex: new ClaudeResumeIndex(root),

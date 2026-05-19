@@ -31,11 +31,11 @@ function cleanBlocks(blocks: ConversationBlock[]): ConversationBlock[] {
 }
 
 function MessageBlock({ block }: { block: ConversationBlock }) {
-  if (block.kind === 'tool') {
+  if (block.kind === 'tool' || block.kind === 'system') {
     return (
-      <details className="message-bubble tool tool-message" data-block-kind="tool" data-block-status={block.status}>
+      <details className={`message-bubble ${block.kind} tool-message`} data-block-kind={block.kind} data-block-status={block.status}>
         <summary>
-          <span>{typedToolOutputLabel(block.text)}</span>
+          <span>{collapsedBlockLabel(block.kind, block.text)}</span>
           <time dateTime={block.createdAt}>{formatTime(block.createdAt)}</time>
         </summary>
         <pre>{block.text}</pre>
@@ -54,9 +54,11 @@ function MessageBlock({ block }: { block: ConversationBlock }) {
   );
 }
 
-function typedToolOutputLabel(text: string): string {
+function collapsedBlockLabel(kind: ConversationBlock['kind'], text: string): string {
   const name = text.split(/\r?\n/)[0]?.trim();
-  return name ? `工具调用 · ${name}` : toolOutputLabel(text);
+  if (kind === 'tool') return name ? `工具调用 · ${name}` : toolOutputLabel(text);
+  if (kind === 'system') return name ? `系统信息 · ${name}` : '系统信息';
+  return name || kind;
 }
 
 function formatTime(value: string): string {

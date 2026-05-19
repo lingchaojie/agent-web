@@ -105,6 +105,19 @@ describe('MessageStream', () => {
 
     expect(scrollIntoView).not.toHaveBeenCalled();
   });
+
+  it('renders system and tool blocks as collapsed details', () => {
+    const blocks = [
+      block('system', 'Thinking\nprivate reasoning'),
+      block('tool', 'Bash\nnpm test', '2'),
+    ];
+
+    const { container } = render(<MessageStream blocks={blocks} />);
+
+    expect(container.querySelectorAll('details.message-bubble')).toHaveLength(2);
+    expect(screen.getByText('系统信息 · Thinking')).toBeInTheDocument();
+    expect(screen.getByText('工具调用 · Bash')).toBeInTheDocument();
+  });
 });
 
 function block(kind: ConversationBlockKind, text: string, id = '1'): ConversationBlock {

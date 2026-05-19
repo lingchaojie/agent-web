@@ -1,5 +1,6 @@
 /** @vitest-environment jsdom */
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { useState } from 'react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import ChatView from '../../src/client/components/ChatView';
 import type { ClaudeSession, ConversationBlock, HistorySession, SessionStatuslineState, SessionViewState, SlashCommandEntry } from '../../src/shared/types';
@@ -271,6 +272,38 @@ describe('ChatView stream protocol rendering', () => {
 
     expect(await screen.findByText('Still visible')).toBeInTheDocument();
     expect(screen.getByText('实时会话已断开。')).toBeInTheDocument();
+  });
+
+  it('shows tmux capture source and disconnected lifecycle with readable labels', async () => {
+    const externalSession = { ...session, source: 'external-tmux' as const };
+
+    function ControlledChatView() {
+      const [currentSession, setCurrentSession] = useState(externalSession);
+      return (
+        <ChatView
+          session={currentSession}
+          onStatusChange={(_sessionId, status) => setCurrentSession((current) => ({ ...current, status }))}
+          onBackToSessions={vi.fn()}
+          onStop={vi.fn()}
+        />
+      );
+    }
+
+    render(<ControlledChatView />);
+    act(() => {
+      socket.dispatchEvent(new Event('open'));
+      socket.dispatchEvent(serverMessage({
+        type: 'snapshot',
+        sessionId: session.id,
+        sequence: 1,
+        session: sessionView({ latestSequence: 1, lifecycle: 'disconnected', activity: 'stopped', transcriptSource: 'tmux-capture' }),
+        blocks: [],
+      }));
+    });
+
+    expect(await screen.findByText('已断开')).toBeInTheDocument();
+    expect(screen.getByText('tmux capture')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '断开' })).toBeDisabled();
   });
 
   it('renders the active session statusline above the composer with ANSI colors preserved', async () => {

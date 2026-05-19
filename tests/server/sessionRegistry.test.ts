@@ -156,4 +156,60 @@ describe('SessionRegistry', () => {
 
     expect(registry.getEventsAfter(session.id, 0).map((event) => event.sequence)).toEqual([2, 3]);
   });
+
+  it('creates and updates external tmux sessions by attachment key', () => {
+    const db = createDatabase(':memory:');
+    const registry = new SessionRegistry(db);
+
+    const session = registry.upsertExternalSession({
+      projectId: 'project-1',
+      externalKey: 'tmux:/tmp/tmux-1000/default:%12',
+      title: 'tmux demo',
+      cwd: '/tmp/demo',
+      paneId: '%12',
+    });
+
+    expect(session).toMatchObject({
+      projectId: 'project-1',
+      source: 'external-tmux',
+      title: 'tmux demo',
+      status: 'running',
+      externalKey: 'tmux:/tmp/tmux-1000/default:%12',
+    });
+
+    const updated = registry.upsertExternalSession({
+      projectId: 'project-1',
+      externalKey: 'tmux:/tmp/tmux-1000/default:%12',
+      title: 'renamed tmux demo',
+      cwd: '/tmp/demo',
+      paneId: '%12',
+    });
+
+    expect(updated.id).toBe(session.id);
+    expect(updated.title).toBe('renamed tmux demo');
+    expect(registry.findByExternalKey('tmux:/tmp/tmux-1000/default:%12')?.id).toBe(session.id);
+  });
+
+  it('marks external tmux sessions disconnected without deleting transcript blocks', () => {
+    const db = createDatabase(':memory:');
+    const registry = new SessionRegistry(db);
+    const session = registry.upsertExternalSession({
+      projectId: 'project-1',
+      externalKey: 'tmux:socket:%9',
+      title: 'attached',
+      cwd: '/tmp/demo',
+      paneId: '%9',
+    });
+    registry.appendBlock(session.id, { kind: 'assistant', text: 'still here', status: 'final', source: 'tmux-capture' });
+
+    const disconnected = registry.markExternalDisconnected(session.id);
+
+    expect(disconnected.status).toBe('stopped');
+    expect(registry.getSnapshot(session.id).session).toMatchObject({
+      lifecycle: 'disconnected',
+      activity: 'stopped',
+      transcriptSource: 'tmux-capture',
+    });
+    expect(registry.getSnapshot(session.id).blocks.map((block) => block.text)).toEqual(['still here']);
+  });
 });

@@ -1,4 +1,4 @@
-import type { ConversationBlock, ConversationBlockSource, Project, PromptAction, SessionActivity, SessionLifecycle, SessionRenderState, SessionStatuslineState, SessionStreamEvent, WsServerMessage } from '../../shared/types';
+import type { ClaudeSession, ConversationBlock, ConversationBlockSource, Project, PromptAction, SessionActivity, SessionLifecycle, SessionRenderState, SessionStatuslineState, SessionStreamEvent, WsServerMessage } from '../../shared/types';
 import type { SessionRegistry } from './sessionRegistry';
 import type { StatuslineService } from './statuslineService';
 import type { ClaudeSemanticEvent } from './claudeEventSource';
@@ -86,34 +86,22 @@ export class RealtimeHub {
       return;
     }
 
-    this.markTranscriptSource(sessionId, 'pty-fallback');
-    text = this.removePendingEcho(sessionId, text);
-    const frame = classifyTerminalStreamFrame(text);
-    if (frame.kind === 'empty') return;
-    if (frame.kind === 'activity') {
-      this.broadcastActivity(sessionId, frame.activity);
-      return;
-    }
+    this.handleTerminalCapture(sessionId, text, 'pty-fallback');
+  }
 
-    if (frame.kind === 'block-update') {
-      this.updateStreamingBlock(sessionId, frame.text);
-      return;
-    }
+  handleTmuxCapture(sessionId: string, text: string): void {
+    this.handleTerminalCapture(sessionId, text, 'tmux-capture');
+  }
 
-    const finalizedBlock = this.finalizeStreamingBlock(sessionId, frame.text);
-    const interaction = frame.interaction ?? parseInteraction(frame.text);
-    this.latestActions.set(sessionId, new Map(interaction.actions.map((action) => [action.id, action])));
-
-    if (!finalizedBlock) {
-      const block = this.sessions.appendBlock(sessionId, { kind: frame.blockKind, text: frame.text, status: frame.status, source: 'pty-fallback', interaction });
-      this.broadcastStreamEvent({ type: 'block-added', sessionId, sequence: block.sequence, block });
-    }
-
-    if (interaction.kind === 'none') {
-      this.broadcastActivity(sessionId, 'idle');
-    } else {
-      this.broadcastWaitingForInput(sessionId, interaction);
-    }
+  disconnectExternalSession(sessionId: string): ClaudeSession {
+    const session = this.sessions.markExternalDisconnected(sessionId);
+    this.broadcastStreamEvent({
+      type: 'session-changed',
+      sessionId,
+      sequence: this.nextEventSequence(sessionId),
+      patch: { lifecycle: 'disconnected', activity: 'stopped', transcriptSource: 'tmux-capture', updatedAt: session.lastActiveAt },
+    });
+    return session;
   }
 
   async refreshStatusline(sessionId: string): Promise<void> {
@@ -142,11 +130,20 @@ export class RealtimeHub {
     this.deliverInput(sessionId, text);
   }
 
-  sendAction(sessionId: string, actionId: string): void {
+  resolveActionInput(sessionId: string, actionId: string): string {
     const action = this.latestActions.get(sessionId)?.get(actionId);
     if (!action) throw new Error('Action not found');
+    return action.input;
+  }
 
-    this.deliverInput(sessionId, action.input);
+  sendExternalInput(sessionId: string, text: string): void {
+    this.pendingEchoes.set(sessionId, text);
+    this.broadcastUserMessage(sessionId, text, 'tmux-capture');
+    this.broadcastActivity(sessionId, 'working');
+  }
+
+  sendAction(sessionId: string, actionId: string): void {
+    this.deliverInput(sessionId, this.resolveActionInput(sessionId, actionId));
   }
 
   handleClaudeEvent(sessionId: string, event: ClaudeSemanticEvent): void {
@@ -181,6 +178,37 @@ export class RealtimeHub {
     this.broadcastStreamEvent({ type: 'activity-changed', sessionId, sequence: this.nextEventSequence(sessionId), activity, activityLabel });
   }
 
+  private handleTerminalCapture(sessionId: string, text: string, source: 'pty-fallback' | 'tmux-capture'): void {
+    this.markTranscriptSource(sessionId, source);
+    text = this.removePendingEcho(sessionId, text);
+    const frame = classifyTerminalStreamFrame(text);
+    if (frame.kind === 'empty') return;
+    if (frame.kind === 'activity') {
+      this.broadcastActivity(sessionId, frame.activity);
+      return;
+    }
+
+    if (frame.kind === 'block-update') {
+      this.updateStreamingBlock(sessionId, frame.text, source);
+      return;
+    }
+
+    const finalizedBlock = this.finalizeStreamingBlock(sessionId, frame.text);
+    const interaction = frame.interaction ?? parseInteraction(frame.text);
+    this.latestActions.set(sessionId, new Map(interaction.actions.map((action) => [action.id, action])));
+
+    if (!finalizedBlock) {
+      const block = this.sessions.appendBlock(sessionId, { kind: frame.blockKind, text: frame.text, status: frame.status, source, interaction });
+      this.broadcastStreamEvent({ type: 'block-added', sessionId, sequence: block.sequence, block });
+    }
+
+    if (interaction.kind === 'none') {
+      this.broadcastActivity(sessionId, 'idle');
+    } else {
+      this.broadcastWaitingForInput(sessionId, interaction);
+    }
+  }
+
   private removePendingEcho(sessionId: string, text: string): string {
     const echo = this.pendingEchoes.get(sessionId);
     if (!echo) return text;
@@ -194,10 +222,10 @@ export class RealtimeHub {
     return lines.join('\n');
   }
 
-  private updateStreamingBlock(sessionId: string, text: string): void {
+  private updateStreamingBlock(sessionId: string, text: string, source: 'pty-fallback' | 'tmux-capture' = 'pty-fallback'): void {
     let block = this.streamingBlocks.get(sessionId);
     if (!block) {
-      block = this.sessions.appendBlock(sessionId, { kind: 'assistant', text, status: 'streaming', source: 'pty-fallback' });
+      block = this.sessions.appendBlock(sessionId, { kind: 'assistant', text, status: 'streaming', source });
       this.streamingBlocks.set(sessionId, block);
       this.broadcastStreamEvent({ type: 'block-added', sessionId, sequence: block.sequence, block });
       return;
@@ -229,8 +257,8 @@ export class RealtimeHub {
     });
   }
 
-  private broadcastUserMessage(sessionId: string, text: string): void {
-    const source = this.transcriptSources.get(sessionId) === 'structured' ? 'structured' : 'pty-fallback';
+  private broadcastUserMessage(sessionId: string, text: string, forcedSource?: ConversationBlockSource): void {
+    const source = forcedSource ?? (this.transcriptSources.get(sessionId) === 'structured' ? 'structured' : 'pty-fallback');
     const block = this.sessions.appendBlock(sessionId, { kind: 'user', text, status: 'final', source });
     this.broadcastStreamEvent({ type: 'block-added', sessionId, sequence: block.sequence, block });
     if (source === 'structured') {
@@ -338,7 +366,7 @@ export class RealtimeHub {
   private markTranscriptSource(sessionId: string, source: ConversationBlockSource): void {
     if (this.transcriptSources.get(sessionId) === source) return;
     this.transcriptSources.set(sessionId, source);
-    if (source === 'structured' || source === 'pty-fallback') this.broadcastSessionPatch(sessionId, { transcriptSource: source });
+    if (source === 'structured' || source === 'pty-fallback' || source === 'tmux-capture') this.broadcastSessionPatch(sessionId, { transcriptSource: source });
   }
 
   private broadcastSessionPatch(sessionId: string, patch: Partial<Parameters<SessionRegistry['updateSessionView']>[1]>): void {

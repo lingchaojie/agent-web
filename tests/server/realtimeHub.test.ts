@@ -337,6 +337,79 @@ describe('RealtimeHub', () => {
     expect(statuslineEvent.sequence).toBe(statuslineEvent.statusline.sequence);
     expect(statuslineEvent.sequence).toBeGreaterThan(Math.max(...otherSequences));
   });
+
+  it('stores tmux capture output with tmux transcript source', () => {
+    const sessions = new SessionRegistry(createDatabase(':memory:'));
+    const session = sessions.upsertExternalSession({ projectId: 'project-1', externalKey: 'tmux:socket:%1', title: 'tmux', cwd: '/tmp/demo', paneId: '%1' });
+    const hub = new RealtimeHub(sessions, fakeRunner());
+    const sent: unknown[] = [];
+    hub.subscribe({ sessionId: session.id }, (message) => sent.push(message));
+
+    hub.handleTmuxCapture(session.id, 'hello from tmux');
+
+    expect(sent[0]).toMatchObject({
+      type: 'snapshot',
+      session: expect.objectContaining({ transcriptSource: 'tmux-capture' }),
+    });
+    expect(sessions.getSnapshot(session.id).session.transcriptSource).toBe('tmux-capture');
+    expect(lastMessage(sent, 'block-added')).toMatchObject({
+      type: 'block-added',
+      sessionId: session.id,
+      block: expect.objectContaining({ source: 'tmux-capture', text: 'hello from tmux' }),
+    });
+  });
+
+  it('broadcasts external tmux disconnects to subscribed clients', () => {
+    const sessions = new SessionRegistry(createDatabase(':memory:'));
+    const session = sessions.upsertExternalSession({ projectId: 'project-1', externalKey: 'tmux:socket:%1', title: 'tmux', cwd: '/tmp/demo', paneId: '%1' });
+    const hub = new RealtimeHub(sessions, fakeRunner());
+    const sent: unknown[] = [];
+    hub.subscribe({ sessionId: session.id }, (message) => sent.push(message));
+
+    const disconnected = hub.disconnectExternalSession(session.id);
+
+    expect(disconnected.status).toBe('stopped');
+    expect(lastMessage(sent, 'session-changed')).toMatchObject({
+      type: 'session-changed',
+      sessionId: session.id,
+      patch: expect.objectContaining({ lifecycle: 'disconnected', activity: 'stopped', transcriptSource: 'tmux-capture' }),
+    });
+  });
+
+  it('records external tmux input with tmux source and working activity', () => {
+    const runner = fakeRunner();
+    const sessions = new SessionRegistry(createDatabase(':memory:'));
+    const session = sessions.upsertExternalSession({ projectId: 'project-1', externalKey: 'tmux:socket:%1', title: 'tmux', cwd: '/tmp/demo', paneId: '%1' });
+    const hub = new RealtimeHub(sessions, runner);
+    const sent: unknown[] = [];
+    hub.subscribe({ sessionId: session.id }, (message) => sent.push(message));
+
+    hub.sendExternalInput(session.id, 'hello');
+
+    expect(runner.sendInput).not.toHaveBeenCalled();
+    expect(sessions.getSnapshot(session.id).blocks.at(-1)).toMatchObject({ kind: 'user', text: 'hello', source: 'tmux-capture' });
+    expect(lastMessage(sent, 'block-added')).toMatchObject({
+      type: 'block-added',
+      sessionId: session.id,
+      block: expect.objectContaining({ kind: 'user', text: 'hello', source: 'tmux-capture' }),
+    });
+    expect(lastMessage(sent, 'activity-changed')).toMatchObject({
+      type: 'activity-changed',
+      sessionId: session.id,
+      activity: 'working',
+    });
+  });
+
+  it('resolves action input from latest actions and rejects unknown action ids', () => {
+    const sessions = new SessionRegistry(createDatabase(':memory:'));
+    const session = sessions.upsertExternalSession({ projectId: 'project-1', externalKey: 'tmux:socket:%1', title: 'tmux', cwd: '/tmp/demo', paneId: '%1' });
+    const hub = new RealtimeHub(sessions, fakeRunner());
+
+    hub.handleTmuxCapture(session.id, 'Choose:\n1. Yes\n2. No');
+
+    expect(hub.resolveActionInput(session.id, 'choice-2')).toBe('2');
+    expect(() => hub.resolveActionInput(session.id, 'choice-3')).toThrow('Action not found');
+  });
 });
 
 function lastMessage(messages: unknown[], type: string) {

@@ -11,18 +11,21 @@ export type Project = {
   updatedAt: string;
 };
 
-export type SessionSource = 'web-created' | 'claude-history';
+export type SessionSource = 'web-created' | 'claude-history' | 'external-tmux';
 export type SessionStatus = 'running' | 'stopped' | 'failed';
 export type SessionActivity = 'idle' | 'working' | 'stopped';
-export type SessionLifecycle = 'running' | 'idle' | 'waiting-for-input' | 'stopping' | 'stopped' | 'failed' | 'degraded-fallback';
+export type SessionLifecycle = 'running' | 'idle' | 'waiting-for-input' | 'stopping' | 'stopped' | 'failed' | 'degraded-fallback' | 'disconnected';
 export type SessionConnection = 'connecting' | 'connected' | 'reconnecting' | 'disconnected';
-export type TranscriptSource = 'structured' | 'pty-fallback';
+export type TranscriptSource = 'structured' | 'pty-fallback' | 'tmux-capture';
 
 export type ClaudeSession = {
   id: string;
   projectId: string;
   source: SessionSource;
   claudeSessionId: string | null;
+  externalKey?: string;
+  externalPaneId?: string;
+  externalCwd?: string;
   title: string;
   status: SessionStatus;
   lastActiveAt: string;
@@ -44,7 +47,7 @@ export type ParsedInteraction = {
 
 export type ConversationBlockKind = 'user' | 'assistant' | 'tool' | 'system' | 'interaction';
 export type ConversationBlockStatus = 'streaming' | 'final';
-export type ConversationBlockSource = 'live' | 'history' | 'structured' | 'pty-fallback';
+export type ConversationBlockSource = 'live' | 'history' | 'structured' | 'pty-fallback' | 'tmux-capture';
 
 export type ConversationBlock = {
   id: string;

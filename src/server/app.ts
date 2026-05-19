@@ -27,6 +27,7 @@ export type RouteContext = {
   transcripts: {
     normalizeEntrypoint(input: { projectPath: string; sessionId: string }): void;
   };
+  tmuxSync?: { refresh(): Promise<void>; sendInput(sessionId: string, text: string): Promise<void> };
 };
 
 export async function createApp(context: RouteContext) {

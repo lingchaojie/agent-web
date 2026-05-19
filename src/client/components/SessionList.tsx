@@ -84,12 +84,12 @@ export default function SessionList({
               <button className="session-open-button" type="button" onClick={() => onOpen(session)}>
                 <span className="list-card-main">
                   <span className="row-title">{session.title}</span>
-                  <span className="row-subtitle">{formatDate(session.lastActiveAt)} · {session.source}</span>
+                  <span className="row-subtitle">{formatDate(session.lastActiveAt)} · {sourceLabel(session)}</span>
                 </span>
                 <span className={`status-chip ${session.status}`}>{session.status}</span>
               </button>
-              <button className="secondary-button compact danger-button" type="button" onClick={() => onStop(session)} aria-label={`关闭 ${session.title}`} disabled={loading}>
-                关闭
+              <button className="secondary-button compact danger-button" type="button" onClick={() => onStop(session)} aria-label={`${stopActionLabel(session)} ${session.title}`} disabled={loading}>
+                {stopActionLabel(session)}
               </button>
             </div>
           ))}
@@ -131,6 +131,15 @@ export default function SessionList({
       </div>
     </section>
   );
+}
+
+function sourceLabel(session: ClaudeSession): string {
+  if (session.source === 'external-tmux') return session.externalPaneId ? `external tmux · ${session.externalPaneId}` : 'external tmux';
+  return session.source;
+}
+
+function stopActionLabel(session: ClaudeSession): string {
+  return session.source === 'external-tmux' ? '断开' : '关闭';
 }
 
 function formatDate(value: string): string {

@@ -23,35 +23,23 @@ describe('claude semantic mapper', () => {
     expect(history.source).toBe('history');
   });
 
-  it('keeps restored JSONL tool use out of visible history blocks while live tools remain visible', () => {
-    const live = mapClaudeEventToSemantic({
-      type: 'tool-use-completed',
-      sessionId: 'session-1',
-      toolUseId: 'tool-1',
-      name: 'Bash',
-      input: { command: 'npm test' },
-      text: 'Bash\nnpm test',
-      order: 1,
-      createdAt: '2026-01-01T00:00:00.000Z',
-    });
-    const history = mapClaudeJsonlEntryToSemantic({
+  it('maps history tool use, tool result, and thinking into collapsible non-direct blocks', () => {
+    expect(mapClaudeJsonlEntryToSemantic({
       type: 'assistant',
-      uuid: 'tool-1',
       timestamp: '2026-01-01T00:00:00.000Z',
-      message: { role: 'assistant', content: [{ type: 'tool_use', name: 'Bash', input: { command: 'npm test' } }] },
-    });
+      message: { role: 'assistant', content: [{ type: 'thinking', thinking: 'considering' }, { type: 'tool_use', name: 'Bash', input: { command: 'npm test' } }] },
+    })).toEqual([
+      expect.objectContaining({ kind: 'system', text: 'Thinking\nconsidering' }),
+      expect.objectContaining({ kind: 'tool', text: 'Bash\nnpm test' }),
+    ]);
 
-    expect(live.block).toMatchObject({ kind: 'tool', text: 'Bash\nnpm test', status: 'final' });
-    expect(history).toEqual([]);
-  });
-
-  it('keeps restored JSONL tool results out of visible history blocks', () => {
     expect(mapClaudeJsonlEntryToSemantic({
       type: 'user',
-      uuid: 'tool-result-1',
-      timestamp: '2026-01-01T00:00:00.000Z',
-      message: { role: 'user', content: [{ type: 'tool_result', content: 'tests passed' }] },
-    })).toEqual([]);
+      timestamp: '2026-01-01T00:00:01.000Z',
+      message: { role: 'user', content: [{ type: 'tool_result', content: 'passed' }] },
+    })).toEqual([
+      expect.objectContaining({ kind: 'tool', text: 'Tool result\npassed' }),
+    ]);
   });
 
   it('keeps unknown structured events out of assistant prose', () => {

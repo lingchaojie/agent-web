@@ -176,7 +176,7 @@ describe('claudeHistoryReader', () => {
     ]);
   });
 
-  it('keeps internal history transcript parts out of visible blocks', () => {
+  it('keeps non-direct history transcript parts as collapsible blocks', () => {
     const root = createTempHistoryRoot();
     const projectDir = join(root, '-home-alvin-kinds');
     mkdirSync(projectDir);
@@ -191,8 +191,29 @@ describe('claudeHistoryReader', () => {
     expect(readClaudeHistory(root)[0].blocks).toEqual([
       expect.objectContaining({ kind: 'system', text: 'System notice' }),
       expect.objectContaining({ kind: 'user', text: 'Run tests' }),
+      expect.objectContaining({ kind: 'system', text: 'Thinking\nprivate reasoning' }),
       expect.objectContaining({ kind: 'assistant', text: 'I will run the tests.' }),
+      expect.objectContaining({ kind: 'tool', text: 'Bash\nnpm test' }),
+      expect.objectContaining({ kind: 'tool', text: 'Tool result\nAll tests passed.' }),
     ]);
+  });
+
+  it('uses Claude native resume history display before JSONL summary titles', () => {
+    const claudeDir = createTempHistoryRoot();
+    const projectsRoot = join(claudeDir, 'projects');
+    const projectDir = join(projectsRoot, '-tmp-demo');
+    mkdirSync(projectDir, { recursive: true });
+    writeTranscript(projectDir, 'resume-title-session', [
+      { type: 'summary', summary: 'JSONL summary title', timestamp: '2026-05-18T19:00:00.000Z' },
+      { type: 'assistant', timestamp: '2026-05-18T19:01:00.000Z', cwd: '/tmp/demo', message: { role: 'assistant', content: 'Done.' } },
+    ]);
+    writeFileSync(
+      join(claudeDir, 'history.jsonl'),
+      `${JSON.stringify({ project: '/tmp/demo', sessionId: 'resume-title-session', display: 'Native /resume title', timestamp: 1234 })}\n`,
+    );
+
+    expect(readClaudeHistory(projectsRoot, { claudeConfigDir: claudeDir })[0].title).toBe('Native /resume title');
+    expect(readClaudeTranscriptWindow(projectsRoot, { sessionId: 'resume-title-session', claudeConfigDir: claudeDir })?.title).toBe('Native /resume title');
   });
 
   it('loads the latest transcript window in chronological order with an older cursor', () => {

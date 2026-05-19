@@ -129,6 +129,7 @@ function historySession(overrides: Partial<HistorySession> = {}): HistorySession
 
 describe('App mobile drilldown', () => {
   beforeEach(() => {
+    localStorage.clear();
     vi.mocked(checkAuth).mockResolvedValue(true);
     vi.mocked(listProjects).mockResolvedValue([project]);
     vi.mocked(listHistory).mockResolvedValue([]);
@@ -152,6 +153,29 @@ describe('App mobile drilldown', () => {
 
     await waitFor(() => expect(stopSession).toHaveBeenCalledWith(session.id));
     await waitFor(() => expect(screen.queryByText('New session')).not.toBeInTheDocument());
+  });
+
+  it('refreshes live sessions for the selected project', async () => {
+    const externalSession: ClaudeSession = {
+      ...session,
+      id: 'external-session-1',
+      source: 'external-tmux',
+      title: 'webagent-claude',
+      externalPaneId: '%0',
+    };
+    vi.mocked(listSessions)
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([externalSession]);
+    render(<App />);
+
+    await screen.findByRole('button', { name: /demo/i });
+    fireEvent.click(screen.getByRole('button', { name: /demo/i }));
+    expect(screen.queryByText('webagent-claude')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: '刷新' }));
+
+    expect(await screen.findByText('webagent-claude')).toBeInTheDocument();
+    expect(screen.getByText(/external tmux · %0/i)).toBeInTheDocument();
   });
 
   it('renders a native Claude shell with sidebar, session rail, conversation canvas, and mobile drawer state', async () => {

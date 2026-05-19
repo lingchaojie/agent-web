@@ -69,6 +69,10 @@ export function createDatabase(path: string): Db {
     );
   `);
   addColumnIfMissing(db, 'session_view_state', 'transcript_source', "TEXT NOT NULL DEFAULT 'pty-fallback'");
+  addColumnIfMissing(db, 'sessions', 'external_key', 'TEXT');
+  addColumnIfMissing(db, 'sessions', 'external_pane_id', 'TEXT');
+  addColumnIfMissing(db, 'sessions', 'external_cwd', 'TEXT');
+  db.exec('CREATE UNIQUE INDEX IF NOT EXISTS sessions_external_key_unique ON sessions(external_key) WHERE external_key IS NOT NULL');
   return db;
 }
 
