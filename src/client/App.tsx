@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { ClaudeSession, HistorySession, Project, SessionStatus, TranscriptWindow } from '../shared/types';
+import type { ClaudeSession, HistorySession, Project, SessionStatus, SlashCommandEntry, TranscriptWindow } from '../shared/types';
 import {
   checkAuth,
   continueSession,
@@ -7,6 +7,7 @@ import {
   listHistory,
   listProjects,
   listSessions,
+  listSlashCommands,
   loadHistoryTranscript,
   loadSessionTranscript,
   resumeSession,
@@ -32,6 +33,7 @@ export default function App() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [history, setHistory] = useState<HistorySession[]>([]);
   const [sessions, setSessions] = useState<ClaudeSession[]>([]);
+  const [slashCommands, setSlashCommands] = useState<SlashCommandEntry[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(() => localStorage.getItem('webagent.selectedProjectId'));
   const [selectedChat, setSelectedChat] = useState<SelectedChat | null>(null);
   const [transcript, setTranscript] = useState<TranscriptWindow | null>(null);
@@ -69,11 +71,13 @@ export default function App() {
       setSelectedChat(null);
       setTranscript(null);
       setSessions([]);
+      setSlashCommands([]);
       localStorage.removeItem('webagent.selectedProjectId');
       return;
     }
     localStorage.setItem('webagent.selectedProjectId', selectedProjectId);
     refreshSessions(selectedProjectId);
+    refreshSlashCommands(selectedProjectId);
   }, [selectedProjectId]);
 
   async function refreshProjectsAndHistory() {
@@ -91,6 +95,15 @@ export default function App() {
       setError(errorMessage(err));
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function refreshSlashCommands(projectId: string) {
+    try {
+      const catalog = await listSlashCommands(projectId);
+      if (selectedProjectId === projectId) setSlashCommands(catalog.commands);
+    } catch {
+      setSlashCommands([]);
     }
   }
 
@@ -119,6 +132,7 @@ export default function App() {
       setSelectedChat(null);
       setTranscript(null);
       setSessions([]);
+      setSlashCommands([]);
       setSelectedProjectId(project.id);
       localStorage.removeItem('webagent.selectedSessionId');
     }
@@ -173,6 +187,14 @@ export default function App() {
 
   function handleHistoryOpen(historySession: HistorySession) {
     void selectHistorySession(historySession);
+  }
+
+  function handleHistoryCommandOpen(historySession: HistorySession) {
+    if (historySession.appSession) {
+      void selectSession(historySession.appSession);
+      return;
+    }
+    void handleResume(historySession);
   }
 
   async function selectSession(session: ClaudeSession) {
@@ -300,7 +322,10 @@ export default function App() {
             session={selectedChat?.kind === 'session' ? selectedChat.session : selectedChat?.session ?? null}
             transcript={transcript}
             transcriptLoadingOlder={transcriptLoadingOlder}
+            commandEntries={slashCommands}
+            resumeCandidates={filteredHistory}
             onLoadOlderTranscript={loadOlderTranscript}
+            onOpenHistorySession={handleHistoryCommandOpen}
             onStatusChange={handleStatusChange}
             onBackToSessions={() => setMobilePane('sessions')}
             onStop={handleStopSession}

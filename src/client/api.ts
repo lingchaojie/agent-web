@@ -1,4 +1,4 @@
-import type { ClaudeSession, HistorySession, Project, TranscriptWindow, WsClientMessage } from '../shared/types';
+import type { ClaudeSession, HistorySession, Project, SlashCommandCatalog, TranscriptWindow, WsClientMessage } from '../shared/types';
 
 const TOKEN_KEY = 'webagent.token';
 
@@ -66,6 +66,10 @@ export function loadHistoryTranscript(sessionId: string, input: { limit?: number
 
 export function loadSessionTranscript(sessionId: string, input: { limit?: number; before?: string } = {}): Promise<TranscriptWindow> {
   return apiGet<TranscriptWindow>(`/api/sessions/${encodeURIComponent(sessionId)}/transcript${queryString(input)}`);
+}
+
+export function listSlashCommands(projectId: string): Promise<SlashCommandCatalog> {
+  return apiGet<SlashCommandCatalog>(`/api/projects/${encodeURIComponent(projectId)}/slash-commands`);
 }
 
 export function createSession(projectId: string): Promise<ClaudeSession> {

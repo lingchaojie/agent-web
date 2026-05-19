@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createApp, type RouteContext } from '../../src/server/app';
+import { historyProjectId } from '../../src/server/services/projectDiscovery';
 import { ClaudeResumeIndex } from '../../src/server/services/claudeResumeIndex';
 import type { ClaudeSession, Project, WsServerMessage } from '../../src/shared/types';
 
@@ -92,6 +93,79 @@ describe('backend routes', () => {
     expect(added.statusCode).toBe(200);
     expect(added.json()).toEqual(project);
     expect(context.projects.addProject).toHaveBeenCalledWith({ name: 'Demo', path: root, favorite: true });
+
+    await app.close();
+  });
+
+  it('returns project-scoped slash command metadata without command bodies', async () => {
+    const project = fakeProject({ id: 'project-1', path: root });
+    mkdirSync(join(root, '.claude', 'commands'), { recursive: true });
+    writeFileSync(join(root, '.claude', 'commands', 'deploy.md'), 'Deploy the selected service\n\nRun internal deploy steps.');
+    mkdirSync(join(root, '.claude', 'skills', 'audit'), { recursive: true });
+    writeFileSync(join(root, '.claude', 'skills', 'audit', 'SKILL.md'), [
+      '---',
+      'name: audit',
+      'description: Review changed code for risky behavior',
+      '---',
+      'Private skill body',
+    ].join('\n'));
+    const context = fakeContext();
+    context.projects.getProject = vi.fn(() => project);
+    const app = await createApp(context);
+
+    const response = await app.inject({ method: 'GET', url: `/api/projects/${project.id}/slash-commands`, headers: authHeaders() });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({
+      projectId: project.id,
+      commands: expect.arrayContaining([
+        expect.objectContaining({ name: '/resume', scope: 'app', behavior: 'app-owned', support: 'supported' }),
+        expect.objectContaining({ name: '/deploy', scope: 'project', behavior: 'prompt-insert', support: 'supported', description: 'Deploy the selected service' }),
+        expect.objectContaining({ name: '/audit', scope: 'project', behavior: 'prompt-insert', support: 'supported', description: 'Review changed code for risky behavior' }),
+      ]),
+    });
+    expect(JSON.stringify(response.json())).not.toContain('Run internal deploy steps');
+    expect(JSON.stringify(response.json())).not.toContain('Private skill body');
+
+    await app.close();
+  });
+
+  it('returns built-in slash commands when local discovery is unavailable', async () => {
+    const project = fakeProject({ id: 'project-1', path: root });
+    const context = fakeContext({ claudeConfigDir: join(root, 'missing-claude-config') });
+    context.projects.getProject = vi.fn(() => project);
+    const app = await createApp(context);
+
+    const response = await app.inject({ method: 'GET', url: `/api/projects/${project.id}/slash-commands`, headers: authHeaders() });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({
+      projectId: project.id,
+      commands: [
+        expect.objectContaining({ name: '/resume', scope: 'app', behavior: 'app-owned', support: 'supported' }),
+      ],
+    });
+
+    await app.close();
+  });
+
+  it('returns slash commands for discovered history projects', async () => {
+    const discoveredProjectPath = join(root, 'history-demo');
+    const historyProjectRoot = join(root, 'projects', '-tmp-history-demo');
+    mkdirSync(discoveredProjectPath, { recursive: true });
+    mkdirSync(historyProjectRoot, { recursive: true });
+    writeFileSync(join(historyProjectRoot, 'history-session.jsonl'), historyLine({ summary: 'History demo', cwd: discoveredProjectPath }));
+    const projectId = historyProjectId(discoveredProjectPath);
+    const context = fakeContext();
+    const app = await createApp(context);
+
+    const response = await app.inject({ method: 'GET', url: `/api/projects/${encodeURIComponent(projectId)}/slash-commands`, headers: authHeaders() });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({
+      projectId,
+      commands: [expect.objectContaining({ name: '/resume', scope: 'app', behavior: 'app-owned', support: 'supported' })],
+    });
 
     await app.close();
   });

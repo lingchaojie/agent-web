@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
-import type { ClaudeSession, ConversationBlock, ParsedInteraction, SessionActivity, SessionStatus, SessionStreamEvent, SessionViewState, TranscriptWindow, WsServerMessage } from '../../shared/types';
+import type { ClaudeSession, ConversationBlock, HistorySession, ParsedInteraction, SessionActivity, SessionStatus, SessionStreamEvent, SessionViewState, SlashCommandEntry, TranscriptWindow, WsServerMessage } from '../../shared/types';
 import { applySessionStreamEvent, emptySessionStreamState } from '../../shared/sessionStream';
 import { openSessionSocket, sendWs } from '../api';
 import MessageStream from './MessageStream';
 import PromptActions from './PromptActions';
 import SessionRenderSurface from './SessionRenderSurface';
 import TranscriptView from './TranscriptView';
+import ChatComposer from './ChatComposer';
+import SessionStatusline from './SessionStatusline';
 
 type DisplaySession = Pick<ClaudeSession, 'id' | 'title' | 'status'> & Partial<ClaudeSession>;
 
@@ -13,7 +15,10 @@ type ChatViewProps = {
   session: DisplaySession | null;
   transcript?: TranscriptWindow | null;
   transcriptLoadingOlder?: boolean;
+  commandEntries?: SlashCommandEntry[];
+  resumeCandidates?: HistorySession[];
   onLoadOlderTranscript?(): void;
+  onOpenHistorySession?(session: HistorySession): void;
   onStatusChange(sessionId: string, status: SessionStatus): void;
   onBackToSessions(): void;
   onStop(session: ClaudeSession): void;
@@ -21,7 +26,7 @@ type ChatViewProps = {
 
 type ConnectionState = 'idle' | 'connecting' | 'connected' | 'reconnecting' | 'disconnected';
 
-export default function ChatView({ session, transcript, transcriptLoadingOlder = false, onLoadOlderTranscript = () => undefined, onStatusChange, onBackToSessions, onStop }: ChatViewProps) {
+export default function ChatView({ session, transcript, transcriptLoadingOlder = false, commandEntries = [], resumeCandidates = [], onLoadOlderTranscript = () => undefined, onOpenHistorySession, onStatusChange, onBackToSessions, onStop }: ChatViewProps) {
   const [streamState, setStreamState] = useState(emptySessionStreamState);
   const [interaction, setInteraction] = useState<ParsedInteraction | null>(null);
   const [input, setInput] = useState('');
@@ -185,18 +190,17 @@ export default function ChatView({ session, transcript, transcriptLoadingOlder =
         </>
       )}
 
-      <form className="composer" onSubmit={handleSubmit}>
-        <textarea
-          value={input}
-          onChange={(event) => setInput(event.target.value)}
-          placeholder="输入要发送给 Claude Code 的内容..."
-          rows={3}
-          disabled={connectionState !== 'connected'}
-        />
-        <button className="primary-button" type="submit" disabled={connectionState !== 'connected' || !input.trim()}>
-          发送
-        </button>
-      </form>
+      <SessionStatusline statusline={streamState.statusline} />
+
+      <ChatComposer
+        value={input}
+        disabled={connectionState !== 'connected'}
+        commandEntries={commandEntries}
+        resumeCandidates={resumeCandidates}
+        onChange={setInput}
+        onSubmit={() => handleSubmit({ preventDefault: () => undefined })}
+        onOpenHistorySession={onOpenHistorySession}
+      />
     </section>
   );
 }
@@ -231,7 +235,7 @@ function parseServerMessage(raw: unknown): WsServerMessage | null {
 }
 
 function isSessionStreamEvent(message: WsServerMessage): message is SessionStreamEvent {
-  return message.type === 'snapshot' || message.type === 'block-added' || message.type === 'block-updated' || message.type === 'block-finalized' || message.type === 'activity-changed' || message.type === 'session-changed' || message.type === 'render-changed';
+  return message.type === 'snapshot' || message.type === 'block-added' || message.type === 'block-updated' || message.type === 'block-finalized' || message.type === 'activity-changed' || message.type === 'session-changed' || message.type === 'render-changed' || message.type === 'statusline-changed';
 }
 
 function streamEventSequence(event: SessionStreamEvent): number {
@@ -286,4 +290,3 @@ function statusFromLifecycle(lifecycle: SessionViewState['lifecycle']): SessionS
   if (lifecycle === 'running' || lifecycle === 'stopped' || lifecycle === 'failed') return lifecycle;
   return null;
 }
-
