@@ -1,4 +1,4 @@
-import type { ClaudeSession, HistorySession, Project, WsClientMessage } from '../shared/types';
+import type { ClaudeSession, HistorySession, Project, SlashCommandCatalog, WsClientMessage } from '../shared/types';
 
 const TOKEN_KEY = 'webagent.token';
 
@@ -58,6 +58,10 @@ export function listSessions(projectId: string): Promise<ClaudeSession[]> {
 
 export function listHistory(): Promise<HistorySession[]> {
   return apiGet<HistorySession[]>('/api/history');
+}
+
+export function listSlashCommands(projectId: string): Promise<SlashCommandCatalog> {
+  return apiGet<SlashCommandCatalog>(`/api/projects/${encodeURIComponent(projectId)}/slash-commands`);
 }
 
 export function createSession(projectId: string): Promise<ClaudeSession> {

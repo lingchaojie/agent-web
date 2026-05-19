@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { ClaudeSession, HistorySession, Project, SessionStatus } from '../shared/types';
+import type { ClaudeSession, HistorySession, Project, SessionStatus, SlashCommandEntry } from '../shared/types';
 import {
   checkAuth,
   continueSession,
@@ -7,6 +7,7 @@ import {
   listHistory,
   listProjects,
   listSessions,
+  listSlashCommands,
   resumeSession,
   stopSession,
 } from './api';
@@ -23,6 +24,7 @@ export default function App() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [history, setHistory] = useState<HistorySession[]>([]);
   const [sessions, setSessions] = useState<ClaudeSession[]>([]);
+  const [slashCommands, setSlashCommands] = useState<SlashCommandEntry[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(() => localStorage.getItem('webagent.selectedProjectId'));
   const [selectedSession, setSelectedSession] = useState<ClaudeSession | null>(null);
   const [mobilePane, setMobilePane] = useState<MobilePane>(() => (localStorage.getItem('webagent.selectedSessionId') ? 'chat' : 'projects'));
@@ -57,11 +59,13 @@ export default function App() {
       sessionRequestIdRef.current += 1;
       setSelectedSession(null);
       setSessions([]);
+      setSlashCommands([]);
       localStorage.removeItem('webagent.selectedProjectId');
       return;
     }
     localStorage.setItem('webagent.selectedProjectId', selectedProjectId);
     refreshSessions(selectedProjectId);
+    refreshSlashCommands(selectedProjectId);
   }, [selectedProjectId]);
 
   async function refreshProjectsAndHistory() {
@@ -79,6 +83,15 @@ export default function App() {
       setError(errorMessage(err));
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function refreshSlashCommands(projectId: string) {
+    try {
+      const catalog = await listSlashCommands(projectId);
+      if (selectedProjectId === projectId) setSlashCommands(catalog.commands);
+    } catch {
+      setSlashCommands([]);
     }
   }
 
@@ -106,6 +119,7 @@ export default function App() {
       sessionRequestIdRef.current += 1;
       setSelectedSession(null);
       setSessions([]);
+      setSlashCommands([]);
       setSelectedProjectId(project.id);
       localStorage.removeItem('webagent.selectedSessionId');
     }
@@ -156,6 +170,14 @@ export default function App() {
 
   function handleSessionOpen(session: ClaudeSession) {
     selectSession(session);
+  }
+
+  function handleHistoryCommandOpen(historySession: HistorySession) {
+    if (historySession.appSession) {
+      selectSession(historySession.appSession);
+      return;
+    }
+    void handleResume(historySession);
   }
 
   function selectSession(session: ClaudeSession) {
@@ -243,7 +265,15 @@ export default function App() {
           />
         </aside>
         <section className="conversation-canvas" aria-label="对话">
-          <ChatView session={selectedSession} onStatusChange={handleStatusChange} onBackToSessions={() => setMobilePane('sessions')} onStop={handleStopSession} />
+          <ChatView
+            session={selectedSession}
+            commandEntries={slashCommands}
+            resumeCandidates={filteredHistory}
+            onOpenHistorySession={handleHistoryCommandOpen}
+            onStatusChange={handleStatusChange}
+            onBackToSessions={() => setMobilePane('sessions')}
+            onStop={handleStopSession}
+          />
         </section>
       </div>
     </main>

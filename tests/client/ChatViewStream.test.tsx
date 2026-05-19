@@ -2,7 +2,7 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import ChatView from '../../src/client/components/ChatView';
-import type { ClaudeSession, ConversationBlock, SessionViewState } from '../../src/shared/types';
+import type { ClaudeSession, ConversationBlock, HistorySession, SessionViewState, SlashCommandEntry } from '../../src/shared/types';
 
 vi.mock('../../src/client/api', () => ({
   openSessionSocket: vi.fn(),
@@ -25,6 +25,13 @@ const session: ClaudeSession = {
   status: 'running',
   lastActiveAt: '2026-01-01T00:00:00.000Z',
   createdAt: '2026-01-01T00:00:00.000Z',
+};
+
+const appSession: ClaudeSession = {
+  ...session,
+  id: 'app-session-1',
+  claudeSessionId: 'history-session-1',
+  title: 'Existing app session',
 };
 
 describe('ChatView stream protocol rendering', () => {
@@ -176,6 +183,79 @@ describe('ChatView stream protocol rendering', () => {
     expect(container.querySelectorAll('[data-block-kind]')).toHaveLength(0);
   });
 
+  it('opens slash suggestions, supports keyboard selection, and preserves normal prompt submission', async () => {
+    render(<ChatView session={session} commandEntries={slashCommands()} onStatusChange={vi.fn()} onBackToSessions={vi.fn()} onStop={vi.fn()} />);
+    socket.dispatchEvent(new Event('open'));
+    await waitFor(() => expect(sendWs).toHaveBeenCalledWith(socket, { type: 'subscribe', sessionId: session.id }));
+    vi.mocked(sendWs).mockClear();
+
+    const composer = screen.getByPlaceholderText('输入要发送给 Claude Code 的内容...');
+    fireEvent.change(composer, { target: { value: '/d' } });
+
+    expect(await screen.findByRole('listbox', { name: 'Slash commands' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: /Deploy/ })).toHaveAttribute('aria-selected', 'true');
+
+    fireEvent.keyDown(composer, { key: 'Enter' });
+    expect(composer).toHaveValue('/deploy ');
+    expect(sendWs).not.toHaveBeenCalled();
+
+    fireEvent.change(composer, { target: { value: 'hello /tmp' } });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+
+    expect(sendWs).toHaveBeenCalledWith(socket, { type: 'input', sessionId: session.id, text: 'hello /tmp' });
+  });
+
+  it('shows unsupported command feedback without sending raw input', async () => {
+    render(<ChatView session={session} commandEntries={unsupportedCommands()} onStatusChange={vi.fn()} onBackToSessions={vi.fn()} onStop={vi.fn()} />);
+    socket.dispatchEvent(new Event('open'));
+    await waitFor(() => expect(sendWs).toHaveBeenCalledWith(socket, { type: 'subscribe', sessionId: session.id }));
+    vi.mocked(sendWs).mockClear();
+
+    const composer = screen.getByPlaceholderText('输入要发送给 Claude Code 的内容...');
+    fireEvent.change(composer, { target: { value: '/doctor' } });
+    fireEvent.keyDown(composer, { key: 'Enter' });
+
+    expect(await screen.findByText('此命令当前不能在 Web 客户端执行。')).toBeInTheDocument();
+    expect(sendWs).not.toHaveBeenCalled();
+  });
+
+  it('opens existing app sessions from the resume command without sending raw input', async () => {
+    const onOpenHistorySession = vi.fn();
+    render(
+      <ChatView
+        session={session}
+        commandEntries={slashCommands()}
+        resumeCandidates={[historySession({ appSession })]}
+        onOpenHistorySession={onOpenHistorySession}
+        onStatusChange={vi.fn()}
+        onBackToSessions={vi.fn()}
+        onStop={vi.fn()}
+      />,
+    );
+    socket.dispatchEvent(new Event('open'));
+    await waitFor(() => expect(sendWs).toHaveBeenCalledWith(socket, { type: 'subscribe', sessionId: session.id }));
+    vi.mocked(sendWs).mockClear();
+
+    const composer = screen.getByPlaceholderText('输入要发送给 Claude Code 的内容...');
+    fireEvent.change(composer, { target: { value: '/resume' } });
+    fireEvent.keyDown(composer, { key: 'Enter' });
+    fireEvent.click(await screen.findByRole('option', { name: /Demo history/ }));
+
+    expect(onOpenHistorySession).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 'history-session-1' }));
+    expect(sendWs).not.toHaveBeenCalled();
+  });
+
+  it('shows an empty resume state when the active project has no history', async () => {
+    render(<ChatView session={session} commandEntries={slashCommands()} resumeCandidates={[]} onStatusChange={vi.fn()} onBackToSessions={vi.fn()} onStop={vi.fn()} />);
+    socket.dispatchEvent(new Event('open'));
+
+    const composer = screen.getByPlaceholderText('输入要发送给 Claude Code 的内容...');
+    fireEvent.change(composer, { target: { value: '/resume' } });
+    fireEvent.keyDown(composer, { key: 'Enter' });
+
+    expect(await screen.findByText('当前项目没有可恢复的历史会话。')).toBeInTheDocument();
+  });
+
   it('shows a non-destructive disconnected state without clearing blocks', async () => {
     render(<ChatView session={session} onStatusChange={vi.fn()} onBackToSessions={vi.fn()} onStop={vi.fn()} />);
     socket.dispatchEvent(new Event('open'));
@@ -196,6 +276,33 @@ describe('ChatView stream protocol rendering', () => {
 
 function serverMessage(message: unknown): MessageEvent {
   return new MessageEvent('message', { data: JSON.stringify(message) });
+}
+
+function slashCommands(): SlashCommandEntry[] {
+  return [
+    { name: '/resume', title: 'Resume session', description: 'Resume a Claude Code history session', scope: 'app', behavior: 'app-owned', support: 'supported', aliases: [] },
+    { name: '/deploy', title: 'Deploy', description: 'Ship the selected service', scope: 'project', behavior: 'prompt-insert', support: 'supported', aliases: [] },
+  ];
+}
+
+function unsupportedCommands(): SlashCommandEntry[] {
+  return [
+    { name: '/doctor', title: 'Doctor', description: 'Check installation health', scope: 'user', behavior: 'unsupported', support: 'unsupported', aliases: [] },
+  ];
+}
+
+function historySession(overrides: Partial<HistorySession> = {}): HistorySession {
+  return {
+    projectKey: 'project-1',
+    projectPath: '/tmp/demo',
+    sessionId: 'history-session-1',
+    transcriptPath: '/tmp/demo/history-session-1.jsonl',
+    title: 'Demo history',
+    lastMessage: 'Continue this work',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+    blocks: [],
+    ...overrides,
+  };
 }
 
 function sessionView(overrides: Partial<SessionViewState> = {}): SessionViewState {

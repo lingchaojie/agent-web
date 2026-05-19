@@ -15,6 +15,7 @@ import { registerAuthRoutes } from './routes/authRoutes';
 import { registerProjectRoutes } from './routes/projectRoutes';
 import { registerSessionRoutes } from './routes/sessionRoutes';
 import { registerHistoryRoutes } from './routes/historyRoutes';
+import { registerSlashCommandRoutes } from './routes/slashCommandRoutes';
 
 export type RouteContext = {
   config: AppConfig;
@@ -65,6 +66,7 @@ export async function createApp(context: RouteContext) {
   registerProjectRoutes(app, context);
   registerSessionRoutes(app, context);
   registerHistoryRoutes(app, context);
+  registerSlashCommandRoutes(app, context);
 
   return app;
 }

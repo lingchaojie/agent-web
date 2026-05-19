@@ -146,4 +146,31 @@ export type WsClientMessage =
   | { type: 'input'; sessionId: string; text: string }
   | { type: 'action'; sessionId: string; actionId: string; input: string };
 
+export type SlashCommandScope = 'app' | 'project' | 'user';
+export type SlashCommandBehavior = 'app-owned' | 'prompt-insert' | 'unsupported';
+export type SlashCommandSupport = 'supported' | 'unsupported';
+
+export type SlashCommandEntry = {
+  name: `/${string}`;
+  title: string;
+  description: string;
+  scope: SlashCommandScope;
+  behavior: SlashCommandBehavior;
+  support: SlashCommandSupport;
+  aliases: string[];
+};
+
+export type SlashCommandCatalog = {
+  projectId: string;
+  commands: SlashCommandEntry[];
+};
+
+export type ResumeCommandCandidate = {
+  sessionId: string;
+  title: string;
+  lastMessage: string;
+  updatedAt: string;
+  appSessionId?: string;
+};
+
 export type WsServerMessage = SessionStreamEvent | { type: 'error'; sessionId?: string; message: string };

@@ -660,6 +660,7 @@ textarea:focus {
 }
 
 .composer {
+  position: relative;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: end;
   gap: 0.45rem;
@@ -695,6 +696,88 @@ textarea:focus {
   min-height: 2.35rem;
   border-radius: 0.95rem;
   padding: 0.42rem 0.82rem;
+}
+
+.slash-command-popover {
+  position: absolute;
+  right: 0.48rem;
+  bottom: calc(100% + 0.45rem);
+  left: 0.48rem;
+  z-index: 20;
+  display: grid;
+  max-height: min(18rem, 45vh);
+  overflow: auto;
+  padding: 0.38rem;
+  border: 1px solid var(--border-strong);
+  border-radius: 1rem;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.slash-command-option {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  border: 0;
+  border-radius: 0.72rem;
+  padding: 0.6rem 0.7rem;
+  color: var(--text);
+  text-align: left;
+  background: transparent;
+}
+
+.slash-command-option[aria-selected='true'] {
+  background: var(--accent-soft);
+}
+
+.slash-command-main {
+  display: grid;
+  gap: 0.16rem;
+  min-width: 0;
+}
+
+.slash-command-name {
+  font-weight: 800;
+}
+
+.slash-command-description {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 0.78rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.slash-command-scope {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0.16rem 0.45rem;
+  color: var(--muted);
+  background: var(--surface-muted);
+  font-size: 0.68rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.slash-command-empty,
+.slash-command-notice {
+  margin: 0;
+  padding: 0.7rem;
+  color: var(--muted);
+}
+
+.slash-command-notice {
+  position: absolute;
+  right: 0.48rem;
+  bottom: calc(100% + 0.45rem);
+  left: 0.48rem;
+  z-index: 20;
+  border: 1px solid var(--border-strong);
+  border-radius: 0.9rem;
+  background: var(--surface);
+  box-shadow: var(--shadow);
 }
 
 .action-button.allow {

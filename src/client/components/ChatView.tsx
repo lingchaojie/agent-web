@@ -1,13 +1,17 @@
 import { useEffect, useRef, useState } from 'react';
-import type { ClaudeSession, ConversationBlock, ParsedInteraction, SessionActivity, SessionStatus, SessionStreamEvent, SessionViewState, WsServerMessage } from '../../shared/types';
+import type { ClaudeSession, ConversationBlock, HistorySession, ParsedInteraction, SessionActivity, SessionStatus, SessionStreamEvent, SessionViewState, SlashCommandEntry, WsServerMessage } from '../../shared/types';
 import { applySessionStreamEvent, emptySessionStreamState } from '../../shared/sessionStream';
 import { openSessionSocket, sendWs } from '../api';
 import MessageStream from './MessageStream';
 import PromptActions from './PromptActions';
 import SessionRenderSurface from './SessionRenderSurface';
+import ChatComposer from './ChatComposer';
 
 type ChatViewProps = {
   session: ClaudeSession | null;
+  commandEntries?: SlashCommandEntry[];
+  resumeCandidates?: HistorySession[];
+  onOpenHistorySession?(session: HistorySession): void;
   onStatusChange(sessionId: string, status: SessionStatus): void;
   onBackToSessions(): void;
   onStop(session: ClaudeSession): void;
@@ -15,7 +19,7 @@ type ChatViewProps = {
 
 type ConnectionState = 'idle' | 'connecting' | 'connected' | 'reconnecting' | 'disconnected';
 
-export default function ChatView({ session, onStatusChange, onBackToSessions, onStop }: ChatViewProps) {
+export default function ChatView({ session, commandEntries = [], resumeCandidates = [], onOpenHistorySession, onStatusChange, onBackToSessions, onStop }: ChatViewProps) {
   const [streamState, setStreamState] = useState(emptySessionStreamState);
   const [interaction, setInteraction] = useState<ParsedInteraction | null>(null);
   const [input, setInput] = useState('');
@@ -170,18 +174,15 @@ export default function ChatView({ session, onStatusChange, onBackToSessions, on
         </>
       )}
 
-      <form className="composer" onSubmit={handleSubmit}>
-        <textarea
-          value={input}
-          onChange={(event) => setInput(event.target.value)}
-          placeholder="输入要发送给 Claude Code 的内容..."
-          rows={3}
-          disabled={connectionState !== 'connected'}
-        />
-        <button className="primary-button" type="submit" disabled={connectionState !== 'connected' || !input.trim()}>
-          发送
-        </button>
-      </form>
+      <ChatComposer
+        value={input}
+        disabled={connectionState !== 'connected'}
+        commandEntries={commandEntries}
+        resumeCandidates={resumeCandidates}
+        onChange={setInput}
+        onSubmit={() => handleSubmit({ preventDefault: () => undefined })}
+        onOpenHistorySession={onOpenHistorySession}
+      />
     </section>
   );
 }
