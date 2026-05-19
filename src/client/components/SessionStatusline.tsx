@@ -7,6 +7,7 @@ type SessionStatuslineProps = {
 
 type AnsiStyle = {
   foreground?: string;
+  color?: string;
 };
 
 const ANSI_PATTERN = /\x1b\[([0-9;]*)m/g;
@@ -61,8 +62,9 @@ function sanitizeStatuslineText(text: string): string {
 }
 
 function renderText(text: string, style: AnsiStyle, key: number): ReactNode {
-  if (!style.foreground) return <span key={key}>{text}</span>;
-  return <span key={key} className={style.foreground}>{text}</span>;
+  if (style.color) return <span key={key} style={{ color: style.color }}>{text}</span>;
+  if (style.foreground) return <span key={key} className={style.foreground}>{text}</span>;
+  return <span key={key}>{text}</span>;
 }
 
 function parseCodes(raw: string): number[] {
@@ -72,9 +74,53 @@ function parseCodes(raw: string): number[] {
 
 function applyCodes(style: AnsiStyle, codes: number[]): AnsiStyle {
   let next = { ...style };
-  for (const code of codes) {
+  for (let index = 0; index < codes.length; index += 1) {
+    const code = codes[index];
     if (code === 0) next = {};
-    if (FOREGROUND_CLASSES[code]) next.foreground = FOREGROUND_CLASSES[code];
+    else if (code === 39) next = { ...next, foreground: undefined, color: undefined };
+    else if (code === 38 && codes[index + 1] === 5 && codes[index + 2] !== undefined) {
+      next = { ...next, foreground: undefined, color: ansi256Color(codes[index + 2]) };
+      index += 2;
+    } else if (FOREGROUND_CLASSES[code]) {
+      next = { ...next, foreground: FOREGROUND_CLASSES[code], color: undefined };
+    }
   }
   return next;
 }
+
+function ansi256Color(code: number): string | undefined {
+  if (code < 0 || code > 255) return undefined;
+  if (code < 16) return BASIC_ANSI_COLORS[code];
+  if (code < 232) {
+    const value = code - 16;
+    const red = Math.floor(value / 36);
+    const green = Math.floor((value % 36) / 6);
+    const blue = value % 6;
+    return `rgb(${ansi256CubeValue(red)}, ${ansi256CubeValue(green)}, ${ansi256CubeValue(blue)})`;
+  }
+  const gray = 8 + (code - 232) * 10;
+  return `rgb(${gray}, ${gray}, ${gray})`;
+}
+
+function ansi256CubeValue(value: number): number {
+  return value === 0 ? 0 : 55 + value * 40;
+}
+
+const BASIC_ANSI_COLORS = [
+  '#000000',
+  '#800000',
+  '#008000',
+  '#808000',
+  '#000080',
+  '#800080',
+  '#008080',
+  '#c0c0c0',
+  '#808080',
+  '#ff0000',
+  '#00ff00',
+  '#ffff00',
+  '#0000ff',
+  '#ff00ff',
+  '#00ffff',
+  '#ffffff',
+];

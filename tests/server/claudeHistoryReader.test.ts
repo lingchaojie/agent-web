@@ -176,14 +176,14 @@ describe('claudeHistoryReader', () => {
     ]);
   });
 
-  it('maps identifiable history transcript parts to distinct block kinds', () => {
+  it('keeps internal history transcript parts out of visible blocks', () => {
     const root = createTempHistoryRoot();
     const projectDir = join(root, '-home-alvin-kinds');
     mkdirSync(projectDir);
     writeTranscript(projectDir, 'kind-session', [
       { type: 'system', timestamp: '2026-05-18T14:59:00.000Z', content: 'System notice' },
       { type: 'user', timestamp: '2026-05-18T15:00:00.000Z', message: { role: 'user', content: 'Run tests' } },
-      { type: 'assistant', timestamp: '2026-05-18T15:01:00.000Z', message: { role: 'assistant', content: [{ type: 'text', text: 'I will run the tests.' }] } },
+      { type: 'assistant', timestamp: '2026-05-18T15:01:00.000Z', message: { role: 'assistant', content: [{ type: 'thinking', thinking: 'private reasoning' }, { type: 'text', text: 'I will run the tests.' }] } },
       { type: 'assistant', timestamp: '2026-05-18T15:02:00.000Z', message: { role: 'assistant', content: [{ type: 'tool_use', name: 'Bash', input: { command: 'npm test' } }] } },
       { type: 'user', timestamp: '2026-05-18T15:03:00.000Z', message: { role: 'user', content: [{ type: 'tool_result', content: 'All tests passed.' }] } },
     ]);
@@ -192,8 +192,6 @@ describe('claudeHistoryReader', () => {
       expect.objectContaining({ kind: 'system', text: 'System notice' }),
       expect.objectContaining({ kind: 'user', text: 'Run tests' }),
       expect.objectContaining({ kind: 'assistant', text: 'I will run the tests.' }),
-      expect.objectContaining({ kind: 'tool', text: 'Bash\nnpm test' }),
-      expect.objectContaining({ kind: 'tool', text: 'All tests passed.' }),
     ]);
   });
 

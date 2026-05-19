@@ -1,5 +1,5 @@
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
-import { basename, join } from 'node:path';
+import { existsSync, openSync, readSync, closeSync, readdirSync, statSync } from 'node:fs';
+import { basename, dirname, join, relative, sep } from 'node:path';
 import type { Project, SlashCommandCatalog, SlashCommandEntry } from '../../shared/types';
 
 const MAX_DESCRIPTION_BYTES = 4096;
@@ -26,11 +26,12 @@ export function buildSlashCommandCatalog(input: { project: Project; claudeConfig
 
 function discoverCommands(directory: string, scope: SlashCommandEntry['scope']): SlashCommandEntry[] {
   return safeListMarkdownFiles(directory).map((path) => {
-    const name = slashCommandName(basename(path, '.md'));
+    const metadata = readFrontmatterMetadata(path);
+    const name = commandNameForPath(directory, path);
     return {
       name,
-      title: name,
-      description: firstMeaningfulLine(path) || `${name} command`,
+      title: metadata.name || name,
+      description: metadata.description || firstMeaningfulLine(path) || `${name} command`,
       scope,
       behavior: 'prompt-insert' as const,
       support: 'supported' as const,
@@ -65,11 +66,20 @@ function slashCommandName(value: string): `/${string}` {
   return value.startsWith('/') ? value as `/${string}` : `/${value}`;
 }
 
+function commandNameForPath(root: string, path: string): `/${string}` {
+  const namespace = relative(root, dirname(path)).split(sep).filter(Boolean).join(':');
+  const command = basename(path, '.md');
+  return slashCommandName(namespace ? `${namespace}:${command}` : command);
+}
+
 function safeListMarkdownFiles(directory: string): string[] {
   try {
     return readdirSync(directory, { withFileTypes: true })
-      .filter((entry) => entry.isFile() && entry.name.endsWith('.md'))
-      .map((entry) => join(directory, entry.name));
+      .flatMap((entry) => {
+        const path = join(directory, entry.name);
+        if (entry.isDirectory()) return safeListMarkdownFiles(path);
+        return entry.isFile() && entry.name.endsWith('.md') ? [path] : [];
+      });
   } catch {
     return [];
   }
@@ -105,12 +115,18 @@ function readFrontmatterMetadata(path: string): { name?: string; description?: s
 }
 
 function readBoundedText(path: string): string {
+  let file: number | null = null;
   try {
     const stat = statSync(path);
-    if (!stat.isFile() || stat.size > MAX_DESCRIPTION_BYTES) return '';
-    return readFileSync(path, 'utf8');
+    if (!stat.isFile()) return '';
+    file = openSync(path, 'r');
+    const buffer = Buffer.alloc(Math.min(stat.size, MAX_DESCRIPTION_BYTES));
+    const bytesRead = readSync(file, buffer, 0, buffer.length, 0);
+    return buffer.subarray(0, bytesRead).toString('utf8');
   } catch {
     return '';
+  } finally {
+    if (file !== null) closeSync(file);
   }
 }
 

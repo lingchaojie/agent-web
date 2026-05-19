@@ -114,18 +114,11 @@ function extractContentPart(role: string | undefined, part: unknown, entry: Clau
   if (!part || typeof part !== 'object') return [];
   const type = 'type' in part && typeof part.type === 'string' ? part.type : '';
 
-  if (type === 'tool_use') return textToBlockParts('tool', extractToolUseText(part), entry);
-  if (type === 'tool_result') return textToBlockParts('tool', extractText('content' in part ? part.content : undefined), entry);
+  if (type === 'tool_use' || type === 'tool_result' || type === 'thinking') return [];
 
   const kind = messageRoleToBlockKind(role);
   if (!kind) return [];
   return textToBlockParts(kind, extractText(part), entry);
-}
-
-function extractToolUseText(part: object): string {
-  const name = 'name' in part && typeof part.name === 'string' ? part.name : 'Tool';
-  const input = 'input' in part ? part.input : undefined;
-  return toolText(name, input);
 }
 
 function textToBlockParts(kind: ConversationBlockKind, text: string, entry: ClaudeJsonlEntry): SemanticBlockPart[] {

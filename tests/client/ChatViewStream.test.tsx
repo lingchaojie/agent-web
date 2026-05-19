@@ -295,6 +295,24 @@ describe('ChatView stream protocol rendering', () => {
     expect(container.querySelector('.session-statusline')?.compareDocumentPosition(screen.getByPlaceholderText('输入要发送给 Claude Code 的内容...'))).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
   });
 
+  it('renders 256-color statusline ANSI without treating palette indexes as basic colors', async () => {
+    const { container } = render(<ChatView session={session} onStatusChange={vi.fn()} onBackToSessions={vi.fn()} onStop={vi.fn()} />);
+    socket.dispatchEvent(new Event('open'));
+    socket.dispatchEvent(serverMessage({
+      type: 'snapshot',
+      sessionId: session.id,
+      sequence: 1,
+      session: sessionView({ latestSequence: 1 }),
+      blocks: [],
+      statusline: statusline({ text: '[38;5;30mClaude[39m [38;5;96mxhigh[39m' }),
+    }));
+
+    await screen.findByText('Claude');
+    expect(container.querySelector('.ansi-fg-black')).not.toBeInTheDocument();
+    expect(container.querySelector('[style*="rgb(0, 135, 135)"]')).toHaveTextContent('Claude');
+    expect(container.querySelector('[style*="rgb(135, 95, 135)"]')).toHaveTextContent('xhigh');
+  });
+
   it('updates statusline from live stream events without adding transcript blocks', async () => {
     const { container } = render(<ChatView session={session} onStatusChange={vi.fn()} onBackToSessions={vi.fn()} onStop={vi.fn()} />);
     socket.dispatchEvent(new Event('open'));

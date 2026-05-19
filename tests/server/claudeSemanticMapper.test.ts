@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest';
-import { toolResultJsonlEntry } from '../fixtures/claudeStructuredEvents';
 import { mapClaudeEventToSemantic, mapClaudeJsonlEntryToSemantic } from '../../src/server/services/claudeSemanticMapper';
 
 describe('claude semantic mapper', () => {
@@ -24,7 +23,7 @@ describe('claude semantic mapper', () => {
     expect(history.source).toBe('history');
   });
 
-  it('maps equivalent tool semantics to distinct tool blocks', () => {
+  it('keeps restored JSONL tool use out of visible history blocks while live tools remain visible', () => {
     const live = mapClaudeEventToSemantic({
       type: 'tool-use-completed',
       sessionId: 'session-1',
@@ -35,7 +34,7 @@ describe('claude semantic mapper', () => {
       order: 1,
       createdAt: '2026-01-01T00:00:00.000Z',
     });
-    const [history] = mapClaudeJsonlEntryToSemantic({
+    const history = mapClaudeJsonlEntryToSemantic({
       type: 'assistant',
       uuid: 'tool-1',
       timestamp: '2026-01-01T00:00:00.000Z',
@@ -43,13 +42,16 @@ describe('claude semantic mapper', () => {
     });
 
     expect(live.block).toMatchObject({ kind: 'tool', text: 'Bash\nnpm test', status: 'final' });
-    expect(history).toMatchObject({ kind: 'tool', text: 'Bash\nnpm test', status: 'final' });
+    expect(history).toEqual([]);
   });
 
-  it('maps restored JSONL tool results to tool blocks', () => {
-    expect(mapClaudeJsonlEntryToSemantic(toolResultJsonlEntry)).toEqual([
-      expect.objectContaining({ kind: 'tool', text: 'tests passed', status: 'final', source: 'history' }),
-    ]);
+  it('keeps restored JSONL tool results out of visible history blocks', () => {
+    expect(mapClaudeJsonlEntryToSemantic({
+      type: 'user',
+      uuid: 'tool-result-1',
+      timestamp: '2026-01-01T00:00:00.000Z',
+      message: { role: 'user', content: [{ type: 'tool_result', content: 'tests passed' }] },
+    })).toEqual([]);
   });
 
   it('keeps unknown structured events out of assistant prose', () => {

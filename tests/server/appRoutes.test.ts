@@ -99,8 +99,16 @@ describe('backend routes', () => {
 
   it('returns project-scoped slash command metadata without command bodies', async () => {
     const project = fakeProject({ id: 'project-1', path: root });
-    mkdirSync(join(root, '.claude', 'commands'), { recursive: true });
+    mkdirSync(join(root, '.claude', 'commands', 'opsx'), { recursive: true });
     writeFileSync(join(root, '.claude', 'commands', 'deploy.md'), 'Deploy the selected service\n\nRun internal deploy steps.');
+    writeFileSync(join(root, '.claude', 'commands', 'opsx', 'apply.md'), [
+      '---',
+      'name: "OPSX: Apply"',
+      'description: Implement tasks from an OpenSpec change',
+      '---',
+      'Private nested command body',
+      'x'.repeat(5000),
+    ].join('\n'));
     mkdirSync(join(root, '.claude', 'skills', 'audit'), { recursive: true });
     writeFileSync(join(root, '.claude', 'skills', 'audit', 'SKILL.md'), [
       '---',
@@ -121,10 +129,13 @@ describe('backend routes', () => {
       commands: expect.arrayContaining([
         expect.objectContaining({ name: '/resume', scope: 'app', behavior: 'app-owned', support: 'supported' }),
         expect.objectContaining({ name: '/deploy', scope: 'project', behavior: 'prompt-insert', support: 'supported', description: 'Deploy the selected service' }),
+        expect.objectContaining({ name: '/opsx:apply', title: 'OPSX: Apply', scope: 'project', behavior: 'prompt-insert', support: 'supported', description: 'Implement tasks from an OpenSpec change' }),
         expect.objectContaining({ name: '/audit', scope: 'project', behavior: 'prompt-insert', support: 'supported', description: 'Review changed code for risky behavior' }),
       ]),
     });
     expect(JSON.stringify(response.json())).not.toContain('Run internal deploy steps');
+    expect(JSON.stringify(response.json())).not.toContain('Private nested command body');
+    expect(JSON.stringify(response.json())).not.toContain('/apply"');
     expect(JSON.stringify(response.json())).not.toContain('Private skill body');
 
     await app.close();
