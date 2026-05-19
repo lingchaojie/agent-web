@@ -4,7 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "tsx src/server/index.ts",
+    "dev:server": "tsx src/server/index.ts",
+    "dev": "HOST=0.0.0.0 PORT=8787 APP_TOKEN=lingchaojie DATABASE_PATH=./webagent-dev.db CLAUDE_CONFIG_DIR=/home/alvin/.claude CLAUDE_BIN=claude SESSION_TTL_MS=1800000 npm run dev:server",
+    "dev:local": "HOST=0.0.0.0 PORT=8877 APP_TOKEN=lingchaojie DATABASE_PATH=./webagent.db CLAUDE_CONFIG_DIR=/home/alvin/.claude CLAUDE_BIN=claude SESSION_TTL_MS=1800000 npm run dev:server",
     "dev:client": "vite --host 0.0.0.0",
     "build": "tsc --noEmit && vite build",
     "test": "vitest run",

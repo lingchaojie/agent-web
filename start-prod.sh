@@ -24,4 +24,4 @@ export CLAUDE_CONFIG_DIR=/home/alvin/.claude
 export CLAUDE_BIN=claude
 export SESSION_TTL_MS=1800000
 
-exec npm run dev
+exec npm run dev:server
