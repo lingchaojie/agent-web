@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { ClaudeSession, HistorySession, Project, SessionStatus } from '../shared/types';
+import type { ClaudeSession, HistorySession, Project, SessionStatus, TranscriptWindow } from '../shared/types';
 import {
   checkAuth,
   continueSession,
@@ -7,6 +7,8 @@ import {
   listHistory,
   listProjects,
   listSessions,
+  loadHistoryTranscript,
+  loadSessionTranscript,
   resumeSession,
   stopSession,
 } from './api';
@@ -16,6 +18,13 @@ import ProjectList from './components/ProjectList';
 import SessionList from './components/SessionList';
 
 type MobilePane = 'projects' | 'sessions' | 'chat';
+type SelectedHistorySession = { id: string; title: string; status: 'stopped'; historySessionId: string };
+
+type SelectedChat =
+  | { kind: 'session'; session: ClaudeSession }
+  | { kind: 'history'; session: SelectedHistorySession };
+
+const TRANSCRIPT_PAGE_SIZE = 50;
 
 export default function App() {
   const [authenticated, setAuthenticated] = useState(false);
@@ -24,7 +33,9 @@ export default function App() {
   const [history, setHistory] = useState<HistorySession[]>([]);
   const [sessions, setSessions] = useState<ClaudeSession[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(() => localStorage.getItem('webagent.selectedProjectId'));
-  const [selectedSession, setSelectedSession] = useState<ClaudeSession | null>(null);
+  const [selectedChat, setSelectedChat] = useState<SelectedChat | null>(null);
+  const [transcript, setTranscript] = useState<TranscriptWindow | null>(null);
+  const [transcriptLoadingOlder, setTranscriptLoadingOlder] = useState(false);
   const [mobilePane, setMobilePane] = useState<MobilePane>(() => (localStorage.getItem('webagent.selectedSessionId') ? 'chat' : 'projects'));
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -55,7 +66,8 @@ export default function App() {
   useEffect(() => {
     if (!selectedProjectId) {
       sessionRequestIdRef.current += 1;
-      setSelectedSession(null);
+      setSelectedChat(null);
+      setTranscript(null);
       setSessions([]);
       localStorage.removeItem('webagent.selectedProjectId');
       return;
@@ -104,7 +116,8 @@ export default function App() {
   function handleProjectSelect(project: Project) {
     if (project.id !== selectedProjectId) {
       sessionRequestIdRef.current += 1;
-      setSelectedSession(null);
+      setSelectedChat(null);
+      setTranscript(null);
       setSessions([]);
       setSelectedProjectId(project.id);
       localStorage.removeItem('webagent.selectedSessionId');
@@ -122,7 +135,7 @@ export default function App() {
       const session = mode === 'new' ? await createSession(projectId) : await continueSession(projectId);
       if (sessionRequestIdRef.current !== requestId || selectedProjectId !== projectId) return;
       setSessions((current) => [session, ...current.filter((item) => item.id !== session.id)]);
-      selectSession(session);
+      void selectSession(session);
     } catch (err) {
       if (sessionRequestIdRef.current !== requestId || selectedProjectId !== projectId) return;
       setError(errorMessage(err));
@@ -143,7 +156,7 @@ export default function App() {
       const session = await resumeSession(projectId, historySession.sessionId, historySession.title);
       if (sessionRequestIdRef.current !== requestId || selectedProjectId !== projectId) return;
       setSessions((current) => [session, ...current.filter((item) => item.id !== session.id)]);
-      selectSession(session);
+      void selectSession(session);
     } catch (err) {
       if (sessionRequestIdRef.current !== requestId || selectedProjectId !== projectId) return;
       setError(errorMessage(err));
@@ -155,20 +168,43 @@ export default function App() {
   }
 
   function handleSessionOpen(session: ClaudeSession) {
-    selectSession(session);
+    void selectSession(session);
   }
 
-  function selectSession(session: ClaudeSession) {
-    setSelectedSession(session);
+  function handleHistoryOpen(historySession: HistorySession) {
+    void selectHistorySession(historySession);
+  }
+
+  async function selectSession(session: ClaudeSession) {
+    setSelectedChat({ kind: 'session', session });
+    setTranscript(null);
     setMobilePane('chat');
     localStorage.setItem('webagent.selectedSessionId', session.id);
+    if (!session.claudeSessionId) return;
+    try {
+      setTranscript(await loadSessionTranscript(session.id, { limit: TRANSCRIPT_PAGE_SIZE }));
+    } catch {
+      setTranscript(null);
+    }
+  }
+
+  async function selectHistorySession(historySession: HistorySession) {
+    const session = { id: `history:${historySession.sessionId}`, title: historySession.title, status: 'stopped' as const, historySessionId: historySession.sessionId };
+    setSelectedChat({ kind: 'history', session });
+    setTranscript(null);
+    setMobilePane('chat');
+    localStorage.removeItem('webagent.selectedSessionId');
+    try {
+      setTranscript(await loadHistoryTranscript(historySession.sessionId, { limit: TRANSCRIPT_PAGE_SIZE }));
+    } catch (err) {
+      setError(errorMessage(err));
+    }
   }
 
   function restoreSelectedSession(sessions: ClaudeSession[]) {
     const storedSessionId = localStorage.getItem('webagent.selectedSessionId');
     const session = sessions.find((item) => item.id === storedSessionId) ?? null;
-    setSelectedSession(session);
-    if (session) setMobilePane('chat');
+    if (session) void selectSession(session);
   }
 
   async function handleStopSession(session: ClaudeSession) {
@@ -177,9 +213,10 @@ export default function App() {
     try {
       await stopSession(session.id);
       setSessions((current) => current.filter((item) => item.id !== session.id));
-      setSelectedSession((current) => {
-        if (current?.id !== session.id) return current;
+      setSelectedChat((current) => {
+        if (current?.kind !== 'session' || current.session.id !== session.id) return current;
         localStorage.removeItem('webagent.selectedSessionId');
+        setTranscript(null);
         return null;
       });
     } catch (err) {
@@ -191,7 +228,22 @@ export default function App() {
 
   function handleStatusChange(sessionId: string, status: SessionStatus) {
     setSessions((current) => current.map((session) => (session.id === sessionId ? { ...session, status } : session)));
-    setSelectedSession((current) => (current?.id === sessionId ? { ...current, status } : current));
+    setSelectedChat((current) => (current?.kind === 'session' && current.session.id === sessionId ? { kind: 'session', session: { ...current.session, status } } : current));
+  }
+
+  async function loadOlderTranscript() {
+    if (!transcript?.hasMoreOlder || transcriptLoadingOlder || !selectedChat) return;
+    setTranscriptLoadingOlder(true);
+    try {
+      const older = selectedChat.kind === 'history'
+        ? await loadHistoryTranscript(selectedChat.session.historySessionId, { limit: TRANSCRIPT_PAGE_SIZE, before: transcript.olderCursor ?? undefined })
+        : await loadSessionTranscript(selectedChat.session.id, { limit: TRANSCRIPT_PAGE_SIZE, before: transcript.olderCursor ?? undefined });
+      setTranscript((current) => current ? { ...older, regions: [...older.regions, ...current.regions] } : older);
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setTranscriptLoadingOlder(false);
+    }
   }
 
   if (checkingAuth) {
@@ -233,17 +285,26 @@ export default function App() {
             sessions={sessions}
             history={filteredHistory}
             loading={loading}
-            selectedSessionId={selectedSession?.id ?? null}
+            selectedSessionId={selectedChat?.kind === 'session' ? selectedChat.session.id : null}
             onNew={() => startSession('new')}
             onContinue={() => startSession('continue')}
             onResume={handleResume}
             onOpen={handleSessionOpen}
+            onOpenHistory={handleHistoryOpen}
             onStop={handleStopSession}
             onBackToProjects={() => setMobilePane('projects')}
           />
         </aside>
         <section className="conversation-canvas" aria-label="对话">
-          <ChatView session={selectedSession} onStatusChange={handleStatusChange} onBackToSessions={() => setMobilePane('sessions')} onStop={handleStopSession} />
+          <ChatView
+            session={selectedChat?.kind === 'session' ? selectedChat.session : selectedChat?.session ?? null}
+            transcript={transcript}
+            transcriptLoadingOlder={transcriptLoadingOlder}
+            onLoadOlderTranscript={loadOlderTranscript}
+            onStatusChange={handleStatusChange}
+            onBackToSessions={() => setMobilePane('sessions')}
+            onStop={handleStopSession}
+          />
         </section>
       </div>
     </main>

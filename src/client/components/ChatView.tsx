@@ -1,13 +1,19 @@
 import { useEffect, useRef, useState } from 'react';
-import type { ClaudeSession, ConversationBlock, ParsedInteraction, SessionActivity, SessionStatus, SessionStreamEvent, SessionViewState, WsServerMessage } from '../../shared/types';
+import type { ClaudeSession, ConversationBlock, ParsedInteraction, SessionActivity, SessionStatus, SessionStreamEvent, SessionViewState, TranscriptWindow, WsServerMessage } from '../../shared/types';
 import { applySessionStreamEvent, emptySessionStreamState } from '../../shared/sessionStream';
 import { openSessionSocket, sendWs } from '../api';
 import MessageStream from './MessageStream';
 import PromptActions from './PromptActions';
 import SessionRenderSurface from './SessionRenderSurface';
+import TranscriptView from './TranscriptView';
+
+type DisplaySession = Pick<ClaudeSession, 'id' | 'title' | 'status'> & Partial<ClaudeSession>;
 
 type ChatViewProps = {
-  session: ClaudeSession | null;
+  session: DisplaySession | null;
+  transcript?: TranscriptWindow | null;
+  transcriptLoadingOlder?: boolean;
+  onLoadOlderTranscript?(): void;
   onStatusChange(sessionId: string, status: SessionStatus): void;
   onBackToSessions(): void;
   onStop(session: ClaudeSession): void;
@@ -15,7 +21,7 @@ type ChatViewProps = {
 
 type ConnectionState = 'idle' | 'connecting' | 'connected' | 'reconnecting' | 'disconnected';
 
-export default function ChatView({ session, onStatusChange, onBackToSessions, onStop }: ChatViewProps) {
+export default function ChatView({ session, transcript, transcriptLoadingOlder = false, onLoadOlderTranscript = () => undefined, onStatusChange, onBackToSessions, onStop }: ChatViewProps) {
   const [streamState, setStreamState] = useState(emptySessionStreamState);
   const [interaction, setInteraction] = useState<ParsedInteraction | null>(null);
   const [input, setInput] = useState('');
@@ -36,6 +42,11 @@ export default function ChatView({ session, onStatusChange, onBackToSessions, on
 
     if (!session) {
       setConnectionState('idle');
+      return;
+    }
+
+    if (session.status !== 'running') {
+      setConnectionState('disconnected');
       return;
     }
 
@@ -145,22 +156,26 @@ export default function ChatView({ session, onStatusChange, onBackToSessions, on
 
       <header className="chat-header">
         <div>
-          <p className="eyebrow">实时控制会话</p>
-          <h2>{streamState.session?.title ?? session.title}</h2>
+          <p className="eyebrow">{session.status === 'running' ? '实时控制会话' : '历史会话'}</p>
+          <h2>{transcript?.title ?? streamState.session?.title ?? session.title}</h2>
         </div>
         <div className="chat-status-actions">
           <span className={`activity-chip ${lifecycle === 'failed' ? 'failed' : activity}`} data-status-transition={prefersReducedMotion() ? 'reduced' : 'animated'}>{activityLabel(activity, lifecycle)}</span>
           <span className={`source-chip ${streamState.session?.transcriptSource === 'pty-fallback' ? 'degraded' : 'structured'}`}>{sourceLabel(streamState.session?.transcriptSource)}</span>
           <span className={`connection-chip ${connectionState}`}>{connectionState}</span>
-          <button className="secondary-button compact danger-button" type="button" onClick={() => onStop(session)} disabled={session.status !== 'running'}>
-            停止
-          </button>
+          {isClaudeSession(session) ? (
+            <button className="secondary-button compact danger-button" type="button" onClick={() => onStop(session)} disabled={session.status !== 'running'}>
+              停止
+            </button>
+          ) : null}
         </div>
       </header>
 
       {visibleError ? <div className="error-banner">{visibleError}</div> : null}
 
-      {streamState.render ? (
+      {transcript ? (
+        <TranscriptView transcript={transcript} loadingOlder={transcriptLoadingOlder} onLoadOlder={onLoadOlderTranscript} />
+      ) : streamState.render ? (
         <SessionRenderSurface render={streamState.render} disabled={connectionState !== 'connected'} onAction={handleAction} />
       ) : (
         <>
@@ -184,6 +199,10 @@ export default function ChatView({ session, onStatusChange, onBackToSessions, on
       </form>
     </section>
   );
+}
+
+function isClaudeSession(session: DisplaySession): session is ClaudeSession {
+  return typeof session.projectId === 'string' && typeof session.source === 'string' && typeof session.createdAt === 'string' && typeof session.lastActiveAt === 'string';
 }
 
 function activityLabel(activity: SessionActivity, lifecycle: SessionViewState['lifecycle'] | null): string {

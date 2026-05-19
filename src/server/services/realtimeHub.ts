@@ -187,6 +187,16 @@ export class RealtimeHub {
     const source = this.transcriptSources.get(sessionId) === 'structured' ? 'structured' : 'pty-fallback';
     const block = this.sessions.appendBlock(sessionId, { kind: 'user', text, status: 'final', source });
     this.broadcastStreamEvent({ type: 'block-added', sessionId, sequence: block.sequence, block });
+    if (source === 'structured') {
+      this.updateRenderState(sessionId, {
+        type: 'user-message',
+        sessionId,
+        messageId: block.id,
+        text,
+        order: block.sequence,
+        createdAt: block.createdAt,
+      });
+    }
   }
 
   private deliverInput(sessionId: string, text: string): void {

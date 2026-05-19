@@ -29,7 +29,7 @@ export default function SessionRenderSurface({ render, disabled, onAction }: Ses
 function RenderRegionView({ region, disabled, onAction }: { region: RenderRegion; disabled: boolean; onAction(actionId: string): void }) {
   if (region.kind === 'interaction' && region.interaction) {
     return (
-      <section className="cli-region interaction" data-render-kind="interaction" data-render-status={region.status}>
+      <section className="cli-region interaction" data-region-id={region.id} data-render-kind="interaction" data-render-status={region.status}>
         <pre>{region.text}</pre>
         <PromptActions interaction={region.interaction} disabled={disabled} onAction={onAction} />
       </section>
@@ -39,7 +39,7 @@ function RenderRegionView({ region, disabled, onAction }: { region: RenderRegion
   if (region.kind === 'tool') {
     const title = region.text.split(/\r?\n/)[0]?.trim() || 'Tool';
     return (
-      <details className="cli-region tool tool-message" data-render-kind="tool" data-render-status={region.status}>
+      <details className="cli-region tool tool-message" data-region-id={region.id} data-render-kind="tool" data-render-status={region.status}>
         <summary>{title}</summary>
         <pre>{region.text}</pre>
       </details>
@@ -47,7 +47,7 @@ function RenderRegionView({ region, disabled, onAction }: { region: RenderRegion
   }
 
   return (
-    <section className={`cli-region ${region.kind}`} data-render-kind={region.kind} data-render-status={region.status}>
+    <section className={`cli-region ${region.kind}`} data-region-id={region.id} data-render-kind={region.kind} data-render-status={region.status}>
       <pre>{region.text}</pre>
     </section>
   );

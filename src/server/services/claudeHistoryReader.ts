@@ -1,6 +1,6 @@
 import { existsSync, lstatSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import type { ConversationBlock, HistorySession } from '../../shared/types';
+import type { ConversationBlock, HistorySession, RenderRegion, TranscriptWindow } from '../../shared/types';
 import { mapClaudeJsonlEntryToSemantic, type ClaudeJsonlEntry } from './claudeSemanticMapper';
 
 type ParsedLine = ClaudeJsonlEntry & {
@@ -62,6 +62,30 @@ export function projectKeyToPath(projectKey: string): string | null {
   return projectKey.replace(/-/g, '/');
 }
 
+export function readClaudeTranscriptWindow(projectsRoot: string, input: { sessionId: string; limit?: number; before?: string }): TranscriptWindow | null {
+  const located = findTranscript(projectsRoot, input.sessionId);
+  if (!located) return null;
+  const session = readTranscript(located.projectKey, located.transcriptPath);
+  if (!session) return null;
+
+  const limit = Math.max(1, Math.min(input.limit ?? 50, 200));
+  const before = parseCursor(input.before, session.blocks.length + 1);
+  const end = Math.min(before, session.blocks.length);
+  const start = Math.max(0, end - limit);
+  const blocks = session.blocks.slice(start, end);
+
+  return {
+    sessionId: session.sessionId,
+    projectKey: session.projectKey,
+    projectPath: session.projectPath,
+    title: session.title,
+    updatedAt: session.updatedAt,
+    regions: blocks.map(blockToRegion),
+    olderCursor: start > 0 ? String(start) : null,
+    hasMoreOlder: start > 0,
+  };
+}
+
 function readTranscript(projectKey: string, transcriptPath: string): HistorySession | null {
   try {
     const sessionId = transcriptPath.split('/').at(-1)?.replace(/\.jsonl$/, '');
@@ -118,6 +142,46 @@ function readTranscript(projectKey: string, transcriptPath: string): HistorySess
   } catch {
     return null;
   }
+}
+
+function findTranscript(projectsRoot: string, sessionId: string): { projectKey: string; transcriptPath: string } | null {
+  if (!existsSync(projectsRoot)) return null;
+  try {
+    if (!statSync(projectsRoot).isDirectory()) return null;
+    for (const projectEntry of readdirSync(projectsRoot, { withFileTypes: true })) {
+      if (!projectEntry.isDirectory() || projectEntry.isSymbolicLink()) continue;
+      const projectKey = projectEntry.name;
+      const projectDir = join(projectsRoot, projectKey);
+      if (lstatSync(projectDir).isSymbolicLink()) continue;
+      const transcriptPath = join(projectDir, `${sessionId}.jsonl`);
+      if (!existsSync(transcriptPath) || lstatSync(transcriptPath).isSymbolicLink()) continue;
+      const stat = statSync(transcriptPath);
+      if (!stat.isFile() || stat.size > MAX_TRANSCRIPT_BYTES) return null;
+      return { projectKey, transcriptPath };
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+function parseCursor(value: string | undefined, fallback: number): number {
+  if (!value) return fallback;
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
+}
+
+function blockToRegion(block: ConversationBlock): RenderRegion {
+  return {
+    id: block.id,
+    kind: block.kind,
+    text: block.text,
+    status: block.status,
+    source: 'history',
+    createdAt: block.createdAt,
+    updatedAt: block.updatedAt,
+    interaction: block.interaction,
+  };
 }
 
 function parseLine(line: string): ParsedLine | null {

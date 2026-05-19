@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import {
   MAX_TRANSCRIPT_BYTES,
   readClaudeHistory,
+  readClaudeTranscriptWindow,
   projectKeyToPath,
 } from '../../src/server/services/claudeHistoryReader';
 
@@ -194,5 +195,62 @@ describe('claudeHistoryReader', () => {
       expect.objectContaining({ kind: 'tool', text: 'Bash\nnpm test' }),
       expect.objectContaining({ kind: 'tool', text: 'All tests passed.' }),
     ]);
+  });
+
+  it('loads the latest transcript window in chronological order with an older cursor', () => {
+    const root = createTempHistoryRoot();
+    const projectDir = join(root, '-home-alvin-window');
+    mkdirSync(projectDir);
+    writeTranscript(projectDir, 'window-session', [
+      { type: 'summary', summary: 'Window session', timestamp: '2026-05-18T15:59:00.000Z' },
+      { type: 'user', timestamp: '2026-05-18T16:00:00.000Z', message: { role: 'user', content: 'Prompt 1' } },
+      { type: 'assistant', timestamp: '2026-05-18T16:01:00.000Z', message: { role: 'assistant', content: 'Response 1' } },
+      { type: 'user', timestamp: '2026-05-18T16:02:00.000Z', message: { role: 'user', content: 'Prompt 2' } },
+      { type: 'assistant', timestamp: '2026-05-18T16:03:00.000Z', message: { role: 'assistant', content: 'Response 2' } },
+    ]);
+
+    const window = readClaudeTranscriptWindow(root, { sessionId: 'window-session', limit: 2 });
+
+    expect(window).toEqual(expect.objectContaining({ sessionId: 'window-session', hasMoreOlder: true, olderCursor: '2' }));
+    expect(window?.regions).toEqual([
+      expect.objectContaining({ id: 'history-window-session-3', kind: 'user', text: 'Prompt 2' }),
+      expect.objectContaining({ id: 'history-window-session-4', kind: 'assistant', text: 'Response 2' }),
+    ]);
+  });
+
+  it('loads older transcript windows until the beginning is reached', () => {
+    const root = createTempHistoryRoot();
+    const projectDir = join(root, '-home-alvin-older');
+    mkdirSync(projectDir);
+    writeTranscript(projectDir, 'older-session', [
+      { type: 'summary', summary: 'Older session', timestamp: '2026-05-18T16:59:00.000Z' },
+      { type: 'user', timestamp: '2026-05-18T17:00:00.000Z', message: { role: 'user', content: 'Prompt 1' } },
+      { type: 'assistant', timestamp: '2026-05-18T17:01:00.000Z', message: { role: 'assistant', content: 'Response 1' } },
+      { type: 'user', timestamp: '2026-05-18T17:02:00.000Z', message: { role: 'user', content: 'Prompt 2' } },
+    ]);
+
+    const window = readClaudeTranscriptWindow(root, { sessionId: 'older-session', limit: 2, before: '2' });
+
+    expect(window).toEqual(expect.objectContaining({ sessionId: 'older-session', hasMoreOlder: false, olderCursor: null }));
+    expect(window?.regions).toEqual([
+      expect.objectContaining({ id: 'history-older-session-1', kind: 'user', text: 'Prompt 1' }),
+      expect.objectContaining({ id: 'history-older-session-2', kind: 'assistant', text: 'Response 1' }),
+    ]);
+  });
+
+  it('returns null for missing, oversized, or symlinked transcript windows', () => {
+    const root = createTempHistoryRoot();
+    const projectDir = join(root, '-home-alvin-unsafe');
+    const outsideRoot = createTempHistoryRoot();
+    mkdirSync(projectDir);
+    writeFileSync(join(projectDir, 'large-session.jsonl'), `${' '.repeat(MAX_TRANSCRIPT_BYTES + 1)}\n`);
+    writeTranscript(outsideRoot, 'linked-session', [
+      { type: 'summary', summary: 'Linked session', timestamp: '2026-05-18T18:00:00.000Z' },
+    ]);
+    symlinkSync(join(outsideRoot, 'linked-session.jsonl'), join(projectDir, 'linked-session.jsonl'));
+
+    expect(readClaudeTranscriptWindow(root, { sessionId: 'missing-session' })).toBeNull();
+    expect(readClaudeTranscriptWindow(root, { sessionId: 'large-session' })).toBeNull();
+    expect(readClaudeTranscriptWindow(root, { sessionId: 'linked-session' })).toBeNull();
   });
 });

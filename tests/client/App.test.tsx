@@ -2,7 +2,7 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import App from '../../src/client/App';
-import type { ClaudeSession, ConversationBlock, Project, SessionViewState } from '../../src/shared/types';
+import type { ClaudeSession, ConversationBlock, Project, SessionViewState, TranscriptWindow } from '../../src/shared/types';
 
 vi.mock('../../src/client/api', () => ({
   checkAuth: vi.fn(),
@@ -11,6 +11,8 @@ vi.mock('../../src/client/api', () => ({
   listHistory: vi.fn(),
   listProjects: vi.fn(),
   listSessions: vi.fn(),
+  loadHistoryTranscript: vi.fn(),
+  loadSessionTranscript: vi.fn(),
   resumeSession: vi.fn(),
   stopSession: vi.fn(),
   openSessionSocket: vi.fn(),
@@ -23,6 +25,8 @@ import {
   listHistory,
   listProjects,
   listSessions,
+  loadHistoryTranscript,
+  loadSessionTranscript,
   openSessionSocket,
   stopSession,
 } from '../../src/client/api';
@@ -92,12 +96,28 @@ function block(overrides: Partial<ConversationBlock> = {}): ConversationBlock {
   };
 }
 
+function transcriptWindow(overrides: Partial<TranscriptWindow> = {}): TranscriptWindow {
+  return {
+    sessionId: 'native-session',
+    projectKey: '-tmp-demo',
+    projectPath: project.path,
+    title: 'Native transcript',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+    regions: [],
+    olderCursor: null,
+    hasMoreOlder: false,
+    ...overrides,
+  };
+}
+
 describe('App mobile drilldown', () => {
   beforeEach(() => {
     vi.mocked(checkAuth).mockResolvedValue(true);
     vi.mocked(listProjects).mockResolvedValue([project]);
     vi.mocked(listHistory).mockResolvedValue([]);
     vi.mocked(listSessions).mockResolvedValue([]);
+    vi.mocked(loadHistoryTranscript).mockResolvedValue(transcriptWindow());
+    vi.mocked(loadSessionTranscript).mockResolvedValue(transcriptWindow());
     vi.mocked(createSession).mockResolvedValue(session);
     vi.mocked(stopSession).mockResolvedValue({ ...session, status: 'stopped' });
     socket = new FakeWebSocket();
@@ -202,5 +222,93 @@ describe('App mobile drilldown', () => {
     }));
 
     expect(await screen.findByText('Restored after refresh')).toBeInTheDocument();
+  });
+
+  it('opens Claude history sessions as read-only JSONL transcript views', async () => {
+    vi.mocked(listHistory).mockResolvedValue([
+      {
+        projectKey: '-tmp-demo',
+        projectPath: project.path,
+        sessionId: 'history-session',
+        transcriptPath: '/tmp/demo/history-session.jsonl',
+        title: 'History session',
+        lastMessage: 'Latest historical response',
+        updatedAt: '2026-01-01T00:00:00.000Z',
+        blocks: [],
+      },
+    ]);
+    vi.mocked(loadHistoryTranscript).mockResolvedValue(transcriptWindow({
+      sessionId: 'history-session',
+      title: 'History session',
+      regions: [
+        { id: 'history-1', kind: 'user', text: 'Historical prompt', status: 'final', source: 'history', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' },
+        { id: 'history-2', kind: 'assistant', text: 'Historical response', status: 'final', source: 'history', createdAt: '2026-01-01T00:01:00.000Z', updatedAt: '2026-01-01T00:01:00.000Z' },
+      ],
+    }));
+    const { container } = render(<App />);
+
+    fireEvent.click(await screen.findByRole('button', { name: /demo/i }));
+    fireEvent.click(await screen.findByRole('button', { name: '打开' }));
+
+    await waitFor(() => expect(loadHistoryTranscript).toHaveBeenCalledWith('history-session', { limit: 50 }));
+    expect(await screen.findByRole('heading', { name: 'History session', level: 2 })).toBeInTheDocument();
+    expect(screen.getByText('Historical prompt')).toBeInTheDocument();
+    expect(screen.getByText('Historical response')).toBeInTheDocument();
+    expect(container.querySelectorAll('.transcript-window .cli-render-surface')).toHaveLength(1);
+  });
+
+  it('opens live app sessions with native identity as transcript-capable views', async () => {
+    const nativeSession = { ...session, claudeSessionId: 'native-session' };
+    vi.mocked(listSessions).mockResolvedValue([nativeSession]);
+    vi.mocked(loadSessionTranscript).mockResolvedValue(transcriptWindow({
+      sessionId: 'native-session',
+      regions: [{ id: 'native-1', kind: 'user', text: 'Native transcript prompt', status: 'final', source: 'history', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' }],
+    }));
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole('button', { name: /demo/i }));
+    fireEvent.click(await screen.findByText('New session'));
+
+    await waitFor(() => expect(loadSessionTranscript).toHaveBeenCalledWith(nativeSession.id, { limit: 50 }));
+    expect(await screen.findByText('Native transcript prompt')).toBeInTheDocument();
+  });
+
+  it('prepends older transcript regions when loading more history', async () => {
+    vi.mocked(listHistory).mockResolvedValue([
+      {
+        projectKey: '-tmp-demo',
+        projectPath: project.path,
+        sessionId: 'history-session',
+        transcriptPath: '/tmp/demo/history-session.jsonl',
+        title: 'History session',
+        lastMessage: 'Latest historical response',
+        updatedAt: '2026-01-01T00:00:00.000Z',
+        blocks: [],
+      },
+    ]);
+    vi.mocked(loadHistoryTranscript)
+      .mockResolvedValueOnce(transcriptWindow({
+        sessionId: 'history-session',
+        title: 'History session',
+        olderCursor: '1',
+        hasMoreOlder: true,
+        regions: [{ id: 'newer', kind: 'assistant', text: 'Newer response', status: 'final', source: 'history', createdAt: '2026-01-01T00:01:00.000Z', updatedAt: '2026-01-01T00:01:00.000Z' }],
+      }))
+      .mockResolvedValueOnce(transcriptWindow({
+        sessionId: 'history-session',
+        title: 'History session',
+        olderCursor: null,
+        hasMoreOlder: false,
+        regions: [{ id: 'older', kind: 'user', text: 'Older prompt', status: 'final', source: 'history', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' }],
+      }));
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole('button', { name: /demo/i }));
+    fireEvent.click(await screen.findByRole('button', { name: '打开' }));
+    fireEvent.click(await screen.findByRole('button', { name: '加载更早历史' }));
+
+    await waitFor(() => expect(loadHistoryTranscript).toHaveBeenLastCalledWith('history-session', { limit: 50, before: '1' }));
+    expect(await screen.findByText('Older prompt')).toBeInTheDocument();
+    expect(screen.getByText('Newer response')).toBeInTheDocument();
   });
 });

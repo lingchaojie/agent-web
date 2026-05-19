@@ -40,6 +40,7 @@ describe('SessionList', () => {
         onContinue={vi.fn()}
         onResume={vi.fn()}
         onOpen={vi.fn()}
+        onOpenHistory={vi.fn()}
         onStop={onStop}
         onBackToProjects={vi.fn()}
       />,
@@ -64,6 +65,7 @@ describe('SessionList', () => {
         onContinue={vi.fn()}
         onResume={vi.fn()}
         onOpen={vi.fn()}
+        onOpenHistory={vi.fn()}
         onStop={vi.fn()}
         onBackToProjects={vi.fn()}
       />,
@@ -94,6 +96,7 @@ describe('SessionList', () => {
         onContinue={vi.fn()}
         onResume={onResume}
         onOpen={onOpen}
+        onOpenHistory={vi.fn()}
         onStop={vi.fn()}
         onBackToProjects={vi.fn()}
       />,

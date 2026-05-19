@@ -331,6 +331,94 @@ describe('backend routes', () => {
     await app.close();
   });
 
+  it('returns the latest transcript window for available Claude history sessions', async () => {
+    const projectsRoot = join(root, 'projects');
+    const projectRoot = join(projectsRoot, '-tmp-demo');
+    mkdirSync(projectRoot, { recursive: true });
+    writeFileSync(join(projectRoot, 'claude-session.jsonl'), [
+      JSON.stringify({ type: 'summary', summary: 'Demo history', cwd: root, timestamp: '2026-01-01T00:00:00.000Z' }),
+      JSON.stringify({ type: 'user', timestamp: '2026-01-01T00:01:00.000Z', message: { role: 'user', content: 'First prompt' } }),
+      JSON.stringify({ type: 'assistant', timestamp: '2026-01-01T00:02:00.000Z', message: { role: 'assistant', content: 'First response' } }),
+      JSON.stringify({ type: 'user', timestamp: '2026-01-01T00:03:00.000Z', message: { role: 'user', content: 'Latest prompt' } }),
+      '',
+    ].join('\n'));
+    const context = fakeContext({ claudeConfigDir: root });
+    context.projects.listProjects = vi.fn(() => [fakeProject({ id: 'project-1', path: root, available: true })]);
+    const app = await createApp(context);
+
+    const response = await app.inject({ method: 'GET', url: '/api/history/claude-session/transcript?limit=2', headers: authHeaders() });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual(expect.objectContaining({
+      sessionId: 'claude-session',
+      title: 'Demo history',
+      olderCursor: '1',
+      hasMoreOlder: true,
+      regions: [
+        expect.objectContaining({ kind: 'assistant', text: 'First response', source: 'history' }),
+        expect.objectContaining({ kind: 'user', text: 'Latest prompt', source: 'history' }),
+      ],
+    }));
+
+    await app.close();
+  });
+
+  it('returns transcript windows for app sessions with a native Claude identity', async () => {
+    const projectsRoot = join(root, 'projects');
+    const projectRoot = join(projectsRoot, '-tmp-demo');
+    mkdirSync(projectRoot, { recursive: true });
+    writeFileSync(join(projectRoot, 'native-session.jsonl'), [
+      JSON.stringify({ type: 'summary', summary: 'Native history', cwd: root, timestamp: '2026-01-01T00:00:00.000Z' }),
+      JSON.stringify({ type: 'user', timestamp: '2026-01-01T00:01:00.000Z', message: { role: 'user', content: 'App prompt' } }),
+      '',
+    ].join('\n'));
+    const appSession = fakeSession({ id: 'session-1', projectId: 'project-1', claudeSessionId: 'native-session', status: 'running' });
+    const context = fakeContext({ claudeConfigDir: root });
+    context.sessions.getSession = vi.fn(() => appSession);
+    context.projects.getProject = vi.fn(() => fakeProject({ id: 'project-1', path: root, available: true }));
+    const app = await createApp(context);
+
+    const response = await app.inject({ method: 'GET', url: '/api/sessions/session-1/transcript?limit=10', headers: authHeaders() });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual(expect.objectContaining({
+      sessionId: 'native-session',
+      regions: [expect.objectContaining({ kind: 'user', text: 'App prompt' })],
+      hasMoreOlder: false,
+    }));
+
+    await app.close();
+  });
+
+  it('returns transcript windows for app sessions in discovered history projects', async () => {
+    const projectsRoot = join(root, 'projects');
+    const projectRoot = join(projectsRoot, '-tmp-history-demo');
+    const discoveredProjectPath = join(root, 'history-demo');
+    mkdirSync(projectRoot, { recursive: true });
+    mkdirSync(discoveredProjectPath, { recursive: true });
+    writeFileSync(join(projectRoot, 'native-session.jsonl'), [
+      JSON.stringify({ type: 'summary', summary: 'Native history', cwd: discoveredProjectPath, timestamp: '2026-01-01T00:00:00.000Z' }),
+      JSON.stringify({ type: 'user', timestamp: '2026-01-01T00:01:00.000Z', message: { role: 'user', content: 'History project prompt' } }),
+      '',
+    ].join('\n'));
+    const projectId = `history:${Buffer.from(discoveredProjectPath).toString('base64url')}`;
+    const appSession = fakeSession({ id: 'session-1', projectId, claudeSessionId: 'native-session', status: 'running' });
+    const context = fakeContext({ claudeConfigDir: root });
+    context.sessions.getSession = vi.fn(() => appSession);
+    context.projects.getProject = vi.fn(() => null);
+    const app = await createApp(context);
+
+    const response = await app.inject({ method: 'GET', url: '/api/sessions/session-1/transcript?limit=10', headers: authHeaders() });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual(expect.objectContaining({
+      sessionId: 'native-session',
+      regions: [expect.objectContaining({ kind: 'user', text: 'History project prompt' })],
+    }));
+
+    await app.close();
+  });
+
   it('resumes history sessions only when the history belongs to the selected project', async () => {
     const projectsRoot = join(root, 'projects');
     const projectRoot = join(projectsRoot, '-tmp-demo');

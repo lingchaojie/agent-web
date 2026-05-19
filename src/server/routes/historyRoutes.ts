@@ -2,12 +2,34 @@ import { join } from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import type { ConversationBlock, HistorySession, RenderRegion, SessionViewState } from '../../shared/types';
 import type { RouteContext } from '../app';
-import { readClaudeHistory } from '../services/claudeHistoryReader';
-import { historyProjectId, isAvailableProjectPath } from '../services/projectDiscovery';
+import { readClaudeHistory, readClaudeTranscriptWindow } from '../services/claudeHistoryReader';
+import { historyProjectId, isAvailableProjectPath, projectPathFromHistoryId } from '../services/projectDiscovery';
 
 export function registerHistoryRoutes(app: FastifyInstance, context: RouteContext): void {
   app.get('/api/history', async () => {
     return getAvailableHistory(context);
+  });
+
+  app.get('/api/history/:sessionId/transcript', async (request, reply) => {
+    const params = request.params as { sessionId: string };
+    const query = request.query as { limit?: string; before?: string };
+    const history = getAvailableHistory(context).find((session) => session.sessionId === params.sessionId);
+    if (!history?.projectPath) return reply.code(404).send({ error: 'History session not found' });
+
+    const window = readClaudeTranscriptWindow(projectsRoot(context), { sessionId: params.sessionId, limit: parseLimit(query.limit), before: query.before });
+    if (!window) return reply.code(404).send({ error: 'Transcript not found' });
+    return window;
+  });
+
+  app.get('/api/sessions/:sessionId/transcript', async (request, reply) => {
+    const params = request.params as { sessionId: string };
+    const query = request.query as { limit?: string; before?: string };
+    const session = context.sessions.getSession(params.sessionId);
+    if (!session?.claudeSessionId) return reply.code(404).send({ error: 'Transcript not found' });
+
+    const window = readClaudeTranscriptWindow(projectsRoot(context), { sessionId: session.claudeSessionId, limit: parseLimit(query.limit), before: query.before });
+    if (!window?.projectPath || window.projectPath !== resolveSessionProjectPath(context, session.projectId)) return reply.code(404).send({ error: 'Transcript not found' });
+    return window;
   });
 
   app.get('/api/history/:sessionId/snapshot', async (request, reply) => {
@@ -50,13 +72,29 @@ export function registerHistoryRoutes(app: FastifyInstance, context: RouteContex
 }
 
 export function getAvailableHistory(context: RouteContext): HistorySession[] {
-  const projectsRoot = join(context.config.claudeConfigDir, 'projects');
-  return readClaudeHistory(projectsRoot)
+  return readClaudeHistory(projectsRoot(context))
     .filter((session) => session.projectPath !== null && isAvailableProjectPath(session.projectPath))
     .map((session) => {
       const appSession = context.sessions.findByClaudeSessionId(session.sessionId) ?? undefined;
       return appSession ? { ...session, appSessionId: appSession.id, appSession } : session;
     });
+}
+
+function projectsRoot(context: RouteContext): string {
+  return join(context.config.claudeConfigDir, 'projects');
+}
+
+function parseLimit(value: string | undefined): number | undefined {
+  if (!value) return undefined;
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function resolveSessionProjectPath(context: RouteContext, projectId: string): string | null {
+  const project = context.projects.getProject(projectId);
+  if (project?.available) return project.path;
+  const historyPath = projectPathFromHistoryId(projectId);
+  return historyPath && isAvailableProjectPath(historyPath) ? historyPath : null;
 }
 
 function historyBlockToRegion(block: ConversationBlock): RenderRegion {

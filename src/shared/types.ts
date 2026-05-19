@@ -96,6 +96,17 @@ export type SessionRenderState = {
   sequence: number;
 };
 
+export type TranscriptWindow = {
+  sessionId: string;
+  projectKey: string;
+  projectPath: string | null;
+  title: string;
+  updatedAt: string;
+  regions: RenderRegion[];
+  olderCursor: string | null;
+  hasMoreOlder: boolean;
+};
+
 export type SessionViewState = {
   sessionId: string;
   projectId: string;

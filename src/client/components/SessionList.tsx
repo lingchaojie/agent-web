@@ -11,6 +11,7 @@ type SessionListProps = {
   onContinue(): void;
   onResume(historySession: HistorySession): void;
   onOpen(session: ClaudeSession): void;
+  onOpenHistory(historySession: HistorySession): void;
   onStop(session: ClaudeSession): void;
   onBackToProjects(): void;
 };
@@ -25,6 +26,7 @@ export default function SessionList({
   onContinue,
   onResume,
   onOpen,
+  onOpenHistory,
   onStop,
   onBackToProjects,
 }: SessionListProps) {
@@ -105,9 +107,14 @@ export default function SessionList({
                 <p>{item.lastMessage || '暂无预览。'}</p>
                 <span>{formatDate(item.updatedAt)}</span>
               </div>
-              <button className="secondary-button compact" type="button" onClick={() => item.appSession ? onOpen(item.appSession) : onResume(item)} disabled={loading}>
-                {item.appSession ? '打开实时会话' : '恢复'}
-              </button>
+              <div className="history-actions">
+                <button className="secondary-button compact" type="button" onClick={() => onOpenHistory(item)} disabled={loading}>
+                  打开
+                </button>
+                <button className="secondary-button compact" type="button" onClick={() => item.appSession ? onOpen(item.appSession) : onResume(item)} disabled={loading}>
+                  {item.appSession ? '打开实时会话' : '恢复'}
+                </button>
+              </div>
             </article>
           ))}
           {history.length === 0 ? <p className="empty-state">当前没有可恢复的历史会话。</p> : null}

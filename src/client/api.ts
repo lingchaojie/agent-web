@@ -1,4 +1,4 @@
-import type { ClaudeSession, HistorySession, Project, WsClientMessage } from '../shared/types';
+import type { ClaudeSession, HistorySession, Project, TranscriptWindow, WsClientMessage } from '../shared/types';
 
 const TOKEN_KEY = 'webagent.token';
 
@@ -60,6 +60,14 @@ export function listHistory(): Promise<HistorySession[]> {
   return apiGet<HistorySession[]>('/api/history');
 }
 
+export function loadHistoryTranscript(sessionId: string, input: { limit?: number; before?: string } = {}): Promise<TranscriptWindow> {
+  return apiGet<TranscriptWindow>(`/api/history/${encodeURIComponent(sessionId)}/transcript${queryString(input)}`);
+}
+
+export function loadSessionTranscript(sessionId: string, input: { limit?: number; before?: string } = {}): Promise<TranscriptWindow> {
+  return apiGet<TranscriptWindow>(`/api/sessions/${encodeURIComponent(sessionId)}/transcript${queryString(input)}`);
+}
+
 export function createSession(projectId: string): Promise<ClaudeSession> {
   return apiPost<ClaudeSession>('/api/sessions', { projectId, mode: 'new' });
 }
@@ -106,6 +114,14 @@ async function readJsonResponse<T>(response: Response): Promise<T> {
   }
 
   return response.json() as Promise<T>;
+}
+
+function queryString(input: { limit?: number; before?: string }): string {
+  const params = new URLSearchParams();
+  if (input.limit !== undefined) params.set('limit', String(input.limit));
+  if (input.before) params.set('before', input.before);
+  const query = params.toString();
+  return query ? `?${query}` : '';
 }
 
 function base64url(value: string): string {

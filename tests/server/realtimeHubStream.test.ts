@@ -208,6 +208,25 @@ describe('RealtimeHub stream protocol', () => {
     ]);
   });
 
+  it('renders accepted structured user input before assistant output', () => {
+    const sessions = new SessionRegistry(createDatabase(':memory:'));
+    const session = sessions.createSession({ projectId: 'project-1', source: 'web-created', claudeSessionId: null, title: 'Demo' });
+    let hub: RealtimeHub;
+    const runner = { sendInput: vi.fn((sessionId: string) => hub.handleClaudeEvent(sessionId, structuredEvent({ type: 'assistant-message-completed', messageId: 'msg-1', text: 'sync reply' }))) };
+    hub = new RealtimeHub(sessions, runner);
+    const sent: unknown[] = [];
+    hub.subscribe({ sessionId: session.id }, (message) => sent.push(message));
+    hub.handleClaudeEvent(session.id, structuredEvent({ type: 'session-started' }));
+
+    hub.sendInput(session.id, 'hello');
+
+    const renderChanges = sent.filter((message): message is { type: 'render-changed'; render: { regions: unknown[] } } => (message as { type?: string }).type === 'render-changed');
+    expect(renderChanges.at(-1)?.render.regions).toEqual([
+      expect.objectContaining({ kind: 'user', text: 'hello', status: 'final', source: 'structured' }),
+      expect.objectContaining({ kind: 'assistant', text: 'sync reply', status: 'final', source: 'structured' }),
+    ]);
+  });
+
   it('keeps structured sessions accepting input after successful print-mode turn completion', () => {
     const sessions = new SessionRegistry(createDatabase(':memory:'));
     const session = sessions.createSession({ projectId: 'project-1', source: 'web-created', claudeSessionId: null, title: 'Demo' });
@@ -238,6 +257,25 @@ describe('RealtimeHub stream protocol', () => {
       render: expect.objectContaining({
         activeRegion: expect.objectContaining({ id: 'msg-1', kind: 'assistant', text: 'Hel', status: 'streaming' }),
         regions: [],
+      }),
+    });
+  });
+
+  it('includes accepted structured user input in reconnect snapshots', () => {
+    const sessions = new SessionRegistry(createDatabase(':memory:'));
+    const session = sessions.createSession({ projectId: 'project-1', source: 'web-created', claudeSessionId: null, title: 'Demo' });
+    const hub = new RealtimeHub(sessions, fakeRunner());
+    hub.handleClaudeEvent(session.id, structuredEvent({ type: 'session-started' }));
+    hub.sendInput(session.id, 'hello');
+    const sent: unknown[] = [];
+
+    hub.subscribe({ sessionId: session.id }, (message) => sent.push(message));
+
+    expect(sent[0]).toMatchObject({
+      type: 'snapshot',
+      blocks: [expect.objectContaining({ kind: 'user', text: 'hello' })],
+      render: expect.objectContaining({
+        regions: [expect.objectContaining({ kind: 'user', text: 'hello', source: 'structured' })],
       }),
     });
   });
