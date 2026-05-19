@@ -1,10 +1,11 @@
 import type { ParsedInteraction, PromptAction } from '../../shared/types';
+import { stripTerminalControlSequences } from './terminalText';
 
 export const MAX_ACTIONS = 10;
 export const MAX_LABEL_LENGTH = 120;
 
 export function parseInteraction(raw: string): ParsedInteraction {
-  const normalized = stripAnsi(raw);
+  const normalized = stripTerminalControlSequences(raw);
   const choices = parseNumberedChoices(normalized);
   if (choices.length > 0) {
     return { kind: 'choice', raw, actions: choices };
@@ -52,6 +53,3 @@ function getChoiceVariant(label: string): PromptAction['variant'] {
   return 'neutral';
 }
 
-function stripAnsi(value: string): string {
-  return value.replace(/\[[0-?]*[ -/]*[@-~]/g, '');
-}

@@ -1,4 +1,4 @@
-import type { ChatMessage, ClaudeSession, HistorySession, Project, WsClientMessage } from '../shared/types';
+import type { ClaudeSession, HistorySession, Project, WsClientMessage } from '../shared/types';
 
 const TOKEN_KEY = 'webagent.token';
 
@@ -60,10 +60,6 @@ export function listHistory(): Promise<HistorySession[]> {
   return apiGet<HistorySession[]>('/api/history');
 }
 
-export function listHistoryMessages(sessionId: string): Promise<ChatMessage[]> {
-  return apiGet<ChatMessage[]>(`/api/history/${encodeURIComponent(sessionId)}/messages`);
-}
-
 export function createSession(projectId: string): Promise<ClaudeSession> {
   return apiPost<ClaudeSession>('/api/sessions', { projectId, mode: 'new' });
 }
@@ -74,6 +70,10 @@ export function continueSession(projectId: string): Promise<ClaudeSession> {
 
 export function resumeSession(projectId: string, claudeSessionId: string, title: string): Promise<ClaudeSession> {
   return apiPost<ClaudeSession>('/api/sessions/resume', { projectId, claudeSessionId, title });
+}
+
+export function stopSession(sessionId: string): Promise<ClaudeSession> {
+  return apiPost<ClaudeSession>(`/api/sessions/${encodeURIComponent(sessionId)}/stop`, {});
 }
 
 export function openSessionSocket(): WebSocket {

@@ -124,4 +124,75 @@ describe('claudeHistoryReader', () => {
       title: 'Small session',
     });
   });
+
+  it('restores transcript messages as ordered history conversation blocks with stable metadata', () => {
+    const root = createTempHistoryRoot();
+    const projectDir = join(root, '-home-alvin-blocks');
+    mkdirSync(projectDir);
+    writeTranscript(projectDir, 'block-session', [
+      { type: 'summary', summary: 'Block session', timestamp: '2026-05-18T13:59:00.000Z' },
+      { type: 'user', timestamp: '2026-05-18T14:00:00.000Z', message: { role: 'user', content: 'First prompt' } },
+      { type: 'assistant', timestamp: '2026-05-18T14:01:00.000Z', message: { role: 'assistant', content: [{ type: 'text', text: 'First response' }] } },
+      { type: 'user', timestamp: '2026-05-18T14:02:00.000Z', message: { role: 'user', content: 'Second prompt' } },
+    ]);
+
+    const sessions = readClaudeHistory(root);
+
+    expect(sessions[0].blocks).toEqual([
+      expect.objectContaining({
+        id: 'history-block-session-1',
+        sessionId: 'block-session',
+        kind: 'user',
+        text: 'First prompt',
+        sequence: 1,
+        status: 'final',
+        source: 'history',
+        createdAt: '2026-05-18T14:00:00.000Z',
+        updatedAt: '2026-05-18T14:00:00.000Z',
+      }),
+      expect.objectContaining({
+        id: 'history-block-session-2',
+        sessionId: 'block-session',
+        kind: 'assistant',
+        text: 'First response',
+        sequence: 2,
+        status: 'final',
+        source: 'history',
+        createdAt: '2026-05-18T14:01:00.000Z',
+        updatedAt: '2026-05-18T14:01:00.000Z',
+      }),
+      expect.objectContaining({
+        id: 'history-block-session-3',
+        sessionId: 'block-session',
+        kind: 'user',
+        text: 'Second prompt',
+        sequence: 3,
+        status: 'final',
+        source: 'history',
+        createdAt: '2026-05-18T14:02:00.000Z',
+        updatedAt: '2026-05-18T14:02:00.000Z',
+      }),
+    ]);
+  });
+
+  it('maps identifiable history transcript parts to distinct block kinds', () => {
+    const root = createTempHistoryRoot();
+    const projectDir = join(root, '-home-alvin-kinds');
+    mkdirSync(projectDir);
+    writeTranscript(projectDir, 'kind-session', [
+      { type: 'system', timestamp: '2026-05-18T14:59:00.000Z', content: 'System notice' },
+      { type: 'user', timestamp: '2026-05-18T15:00:00.000Z', message: { role: 'user', content: 'Run tests' } },
+      { type: 'assistant', timestamp: '2026-05-18T15:01:00.000Z', message: { role: 'assistant', content: [{ type: 'text', text: 'I will run the tests.' }] } },
+      { type: 'assistant', timestamp: '2026-05-18T15:02:00.000Z', message: { role: 'assistant', content: [{ type: 'tool_use', name: 'Bash', input: { command: 'npm test' } }] } },
+      { type: 'user', timestamp: '2026-05-18T15:03:00.000Z', message: { role: 'user', content: [{ type: 'tool_result', content: 'All tests passed.' }] } },
+    ]);
+
+    expect(readClaudeHistory(root)[0].blocks).toEqual([
+      expect.objectContaining({ kind: 'system', text: 'System notice' }),
+      expect.objectContaining({ kind: 'user', text: 'Run tests' }),
+      expect.objectContaining({ kind: 'assistant', text: 'I will run the tests.' }),
+      expect.objectContaining({ kind: 'tool', text: 'Bash\nnpm test' }),
+      expect.objectContaining({ kind: 'tool', text: 'All tests passed.' }),
+    ]);
+  });
 });

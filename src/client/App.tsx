@@ -8,11 +8,14 @@ import {
   listProjects,
   listSessions,
   resumeSession,
+  stopSession,
 } from './api';
 import ChatView from './components/ChatView';
 import LoginView from './components/LoginView';
 import ProjectList from './components/ProjectList';
 import SessionList from './components/SessionList';
+
+type MobilePane = 'projects' | 'sessions' | 'chat';
 
 export default function App() {
   const [authenticated, setAuthenticated] = useState(false);
@@ -20,8 +23,9 @@ export default function App() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [history, setHistory] = useState<HistorySession[]>([]);
   const [sessions, setSessions] = useState<ClaudeSession[]>([]);
-  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
+  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(() => localStorage.getItem('webagent.selectedProjectId'));
   const [selectedSession, setSelectedSession] = useState<ClaudeSession | null>(null);
+  const [mobilePane, setMobilePane] = useState<MobilePane>(() => (localStorage.getItem('webagent.selectedSessionId') ? 'chat' : 'projects'));
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const sessionRequestIdRef = useRef(0);
@@ -53,8 +57,10 @@ export default function App() {
       sessionRequestIdRef.current += 1;
       setSelectedSession(null);
       setSessions([]);
+      localStorage.removeItem('webagent.selectedProjectId');
       return;
     }
+    localStorage.setItem('webagent.selectedProjectId', selectedProjectId);
     refreshSessions(selectedProjectId);
   }, [selectedProjectId]);
 
@@ -65,7 +71,10 @@ export default function App() {
       const [nextProjects, nextHistory] = await Promise.all([listProjects(), listHistory()]);
       setProjects(nextProjects);
       setHistory(nextHistory);
-      setSelectedProjectId((current) => current ?? nextProjects.find((project) => project.available)?.id ?? nextProjects[0]?.id ?? null);
+      setSelectedProjectId((current) => {
+        if (current && nextProjects.some((project) => project.id === current)) return current;
+        return nextProjects.find((project) => project.available)?.id ?? nextProjects[0]?.id ?? null;
+      });
     } catch (err) {
       setError(errorMessage(err));
     } finally {
@@ -81,6 +90,7 @@ export default function App() {
       const nextSessions = await listSessions(projectId);
       if (sessionRequestIdRef.current !== requestId || selectedProjectId !== projectId) return;
       setSessions(nextSessions);
+      restoreSelectedSession(nextSessions);
     } catch (err) {
       if (sessionRequestIdRef.current !== requestId || selectedProjectId !== projectId) return;
       setError(errorMessage(err));
@@ -92,11 +102,14 @@ export default function App() {
   }
 
   function handleProjectSelect(project: Project) {
-    if (project.id === selectedProjectId) return;
-    sessionRequestIdRef.current += 1;
-    setSelectedSession(null);
-    setSessions([]);
-    setSelectedProjectId(project.id);
+    if (project.id !== selectedProjectId) {
+      sessionRequestIdRef.current += 1;
+      setSelectedSession(null);
+      setSessions([]);
+      setSelectedProjectId(project.id);
+      localStorage.removeItem('webagent.selectedSessionId');
+    }
+    setMobilePane('sessions');
   }
 
   async function startSession(mode: 'new' | 'continue') {
@@ -109,7 +122,7 @@ export default function App() {
       const session = mode === 'new' ? await createSession(projectId) : await continueSession(projectId);
       if (sessionRequestIdRef.current !== requestId || selectedProjectId !== projectId) return;
       setSessions((current) => [session, ...current.filter((item) => item.id !== session.id)]);
-      setSelectedSession(session);
+      selectSession(session);
     } catch (err) {
       if (sessionRequestIdRef.current !== requestId || selectedProjectId !== projectId) return;
       setError(errorMessage(err));
@@ -130,7 +143,7 @@ export default function App() {
       const session = await resumeSession(projectId, historySession.sessionId, historySession.title);
       if (sessionRequestIdRef.current !== requestId || selectedProjectId !== projectId) return;
       setSessions((current) => [session, ...current.filter((item) => item.id !== session.id)]);
-      setSelectedSession(session);
+      selectSession(session);
     } catch (err) {
       if (sessionRequestIdRef.current !== requestId || selectedProjectId !== projectId) return;
       setError(errorMessage(err));
@@ -138,6 +151,41 @@ export default function App() {
       if (sessionRequestIdRef.current === requestId && selectedProjectId === projectId) {
         setLoading(false);
       }
+    }
+  }
+
+  function handleSessionOpen(session: ClaudeSession) {
+    selectSession(session);
+  }
+
+  function selectSession(session: ClaudeSession) {
+    setSelectedSession(session);
+    setMobilePane('chat');
+    localStorage.setItem('webagent.selectedSessionId', session.id);
+  }
+
+  function restoreSelectedSession(sessions: ClaudeSession[]) {
+    const storedSessionId = localStorage.getItem('webagent.selectedSessionId');
+    const session = sessions.find((item) => item.id === storedSessionId) ?? null;
+    setSelectedSession(session);
+    if (session) setMobilePane('chat');
+  }
+
+  async function handleStopSession(session: ClaudeSession) {
+    setLoading(true);
+    setError('');
+    try {
+      await stopSession(session.id);
+      setSessions((current) => current.filter((item) => item.id !== session.id));
+      setSelectedSession((current) => {
+        if (current?.id !== session.id) return current;
+        localStorage.removeItem('webagent.selectedSessionId');
+        return null;
+      });
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setLoading(false);
     }
   }
 
@@ -166,29 +214,37 @@ export default function App() {
       <header className="topbar">
         <div>
           <p className="eyebrow">Claude Code</p>
-          <h1>Mobile Controller</h1>
+          <h1>移动控制台</h1>
         </div>
         <button className="secondary-button compact" type="button" onClick={refreshProjectsAndHistory} disabled={loading}>
-          Refresh
+          刷新
         </button>
       </header>
 
       {error ? <div className="error-banner global-error">{error}</div> : null}
 
-      <div className="dashboard-grid">
-        <ProjectList projects={projects} selectedProjectId={selectedProjectId} onSelect={handleProjectSelect} />
-        <SessionList
-          project={selectedProject}
-          sessions={sessions}
-          history={filteredHistory}
-          loading={loading}
-          selectedSessionId={selectedSession?.id ?? null}
-          onNew={() => startSession('new')}
-          onContinue={() => startSession('continue')}
-          onResume={handleResume}
-          onOpen={setSelectedSession}
-        />
-        <ChatView session={selectedSession} onStatusChange={handleStatusChange} />
+      <div className="native-shell" data-native-shell="app" data-mobile-pane={mobilePane}>
+        <aside className="workspace-sidebar" aria-label="工作区">
+          <ProjectList projects={projects} selectedProjectId={selectedProjectId} onSelect={handleProjectSelect} />
+        </aside>
+        <aside className="session-rail" aria-label="会话">
+          <SessionList
+            project={selectedProject}
+            sessions={sessions}
+            history={filteredHistory}
+            loading={loading}
+            selectedSessionId={selectedSession?.id ?? null}
+            onNew={() => startSession('new')}
+            onContinue={() => startSession('continue')}
+            onResume={handleResume}
+            onOpen={handleSessionOpen}
+            onStop={handleStopSession}
+            onBackToProjects={() => setMobilePane('projects')}
+          />
+        </aside>
+        <section className="conversation-canvas" aria-label="对话">
+          <ChatView session={selectedSession} onStatusChange={handleStatusChange} onBackToSessions={() => setMobilePane('sessions')} onStop={handleStopSession} />
+        </section>
       </div>
     </main>
   );

@@ -30,13 +30,13 @@ export default function LoginView({ onAuthenticated }: LoginViewProps) {
     <main className="login-shell">
       <section className="login-card panel">
         <div className="brand-mark">CC</div>
-        <p className="eyebrow">Mobile command deck</p>
-        <h1>Claude Mobile Controller</h1>
+        <p className="eyebrow">移动控制台</p>
+        <h1>Claude 移动控制台</h1>
         <p className="muted">
-          Connect to your local WebAgent server, pick a project, and steer Claude Code sessions from your phone.
+          连接本机 WebAgent 服务，在手机上选择项目并控制 Claude Code 会话。
         </p>
         <form onSubmit={handleSubmit} className="login-form">
-          <label htmlFor="token">Access token</label>
+          <label htmlFor="token">访问令牌</label>
           <input
             id="token"
             autoComplete="current-password"
@@ -45,11 +45,11 @@ export default function LoginView({ onAuthenticated }: LoginViewProps) {
             type="password"
             value={tokenValue}
             onChange={(event) => setTokenValue(event.target.value)}
-            placeholder="Paste WEBAGENT_TOKEN"
+            placeholder="粘贴 WEBAGENT_TOKEN"
           />
           {error ? <p className="error-text">{error}</p> : null}
           <button className="primary-button" type="submit" disabled={checking}>
-            {checking ? 'Checking...' : 'Unlock controller'}
+            {checking ? '正在检查...' : '进入控制台'}
           </button>
         </form>
       </section>

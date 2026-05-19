@@ -6,6 +6,7 @@ export function createDatabase(path: string): Db {
   const db = new Database(path);
   db.pragma('foreign_keys = ON');
   db.pragma('journal_mode = WAL');
+  // Schema changes are additive so existing local databases are opened in place, not reset.
   db.exec(`
     CREATE TABLE IF NOT EXISTS projects (
       id TEXT PRIMARY KEY,
@@ -33,6 +34,38 @@ export function createDatabase(path: string): Db {
       role TEXT NOT NULL,
       text TEXT NOT NULL,
       created_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS conversation_blocks (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+      kind TEXT NOT NULL,
+      text TEXT NOT NULL,
+      sequence INTEGER NOT NULL,
+      status TEXT NOT NULL,
+      source TEXT NOT NULL,
+      interaction_json TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      UNIQUE(session_id, sequence)
+    );
+
+    CREATE TABLE IF NOT EXISTS stream_events (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+      sequence INTEGER NOT NULL,
+      event_json TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      UNIQUE(session_id, sequence)
+    );
+
+    CREATE TABLE IF NOT EXISTS session_view_state (
+      session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
+      lifecycle TEXT NOT NULL,
+      activity TEXT NOT NULL,
+      activity_label TEXT,
+      pending_interaction_json TEXT,
+      updated_at TEXT NOT NULL
     );
   `);
   return db;
