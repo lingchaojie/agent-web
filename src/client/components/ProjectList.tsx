@@ -15,6 +15,9 @@ export default function ProjectList({ projects, selectedProjectId, onSelect }: P
     return projects.filter((project) => `${project.name} ${project.path}`.toLowerCase().includes(normalized));
   }, [projects, query]);
 
+  const activeProjects = filteredProjects.filter((project) => project.source === 'active-client');
+  const scannedProjects = filteredProjects.filter((project) => project.source !== 'active-client');
+
   return (
     <section className="panel project-panel">
       <div className="section-heading">
@@ -31,28 +34,47 @@ export default function ProjectList({ projects, selectedProjectId, onSelect }: P
         placeholder="搜索本机项目"
         aria-label="搜索项目"
       />
+      <ProjectGroup title="当前打开的 Claude Code 客户端" projects={activeProjects} selectedProjectId={selectedProjectId} onSelect={onSelect} />
+      <ProjectGroup title="扫描 .claude 的工作区" projects={scannedProjects} selectedProjectId={selectedProjectId} onSelect={onSelect} />
+    </section>
+  );
+}
+
+function ProjectGroup({ title, projects, selectedProjectId, onSelect }: { title: string; projects: Project[]; selectedProjectId: string | null; onSelect(project: Project): void }) {
+  if (projects.length === 0) return null;
+  return (
+    <section className="project-group" role="group" aria-label={title}>
+      <h3>{title}</h3>
       <div className="stack-list">
-        {filteredProjects.map((project) => (
-          <button
-            key={project.id}
-            className={`list-card project-card ${project.id === selectedProjectId ? 'selected' : ''}`}
-            type="button"
-            onClick={() => onSelect(project)}
-            disabled={!project.available}
-          >
-            <span className="list-card-main">
-              <span className="row-title">
-                {project.favorite ? '★ ' : ''}{project.name}
-              </span>
-              <span className="row-subtitle">{project.source === 'history' ? '历史项目' : '固定项目'} · {project.path}</span>
-            </span>
-            <span className={`status-chip ${project.available ? 'available' : 'offline'}`}>
-              {project.available ? '可用' : '缺失'}
-            </span>
-          </button>
-        ))}
-        {filteredProjects.length === 0 ? <p className="empty-state">没有匹配项目。</p> : null}
+        {projects.map((project) => <ProjectCard key={project.id} project={project} selected={project.id === selectedProjectId} onSelect={onSelect} />)}
       </div>
     </section>
   );
+}
+
+function ProjectCard({ project, selected, onSelect }: { project: Project; selected: boolean; onSelect(project: Project): void }) {
+  return (
+    <button
+      className={`list-card project-card ${selected ? 'selected' : ''}`}
+      type="button"
+      onClick={() => onSelect(project)}
+      disabled={!project.available}
+    >
+      <span className="list-card-main">
+        <span className="row-title">
+          {project.favorite ? '★ ' : ''}{project.name}
+        </span>
+        <span className="row-subtitle">{projectSourceLabel(project)} · {project.path}</span>
+      </span>
+      <span className={`status-chip ${project.available ? 'available' : 'offline'}`}>
+        {project.available ? '可用' : '缺失'}
+      </span>
+    </button>
+  );
+}
+
+function projectSourceLabel(project: Project): string {
+  if (project.source === 'active-client') return '当前客户端';
+  if (project.source === 'history') return '历史扫描';
+  return '固定项目';
 }

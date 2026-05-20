@@ -11,7 +11,14 @@ const addProjectSchema = z.object({
 });
 
 export function registerProjectRoutes(app: FastifyInstance, context: RouteContext): void {
-  app.get('/api/projects', async () => mergeDiscoveredProjects(context.projects.listProjects(), getAvailableHistory(context)));
+  app.get('/api/projects', async () => {
+    try {
+      await context.tmuxSync?.refresh();
+    } catch {
+      // Existing sessions still identify active client workspaces if tmux refresh is temporarily unavailable.
+    }
+    return mergeDiscoveredProjects(context.projects.listProjects(), getAvailableHistory(context), context.sessions.listExternalSessions());
+  });
 
   app.post('/api/projects', async (request, reply) => {
     const parsed = addProjectSchema.safeParse(request.body);

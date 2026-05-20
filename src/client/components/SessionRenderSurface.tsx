@@ -46,8 +46,9 @@ function RenderRegionView({ region, disabled, onAction }: { region: RenderRegion
     );
   }
 
+  const className = region.kind === 'user' ? 'cli-region user user-message' : `cli-region ${region.kind}`;
   return (
-    <section className={`cli-region ${region.kind}`} data-region-id={region.id} data-render-kind={region.kind} data-render-status={region.status}>
+    <section className={className} data-region-id={region.id} data-render-kind={region.kind} data-render-status={region.status}>
       <pre>{region.text}</pre>
     </section>
   );

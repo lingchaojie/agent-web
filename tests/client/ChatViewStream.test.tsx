@@ -114,6 +114,7 @@ describe('ChatView stream protocol rendering', () => {
     expect(screen.getByText('正在输出')).toBeInTheDocument();
     expect(screen.getByText('requesting')).toBeInTheDocument();
     expect(container.querySelector('.cli-render-surface')).toBeInTheDocument();
+    expect(container.querySelector('.cli-region.user')).toHaveClass('user-message');
     expect(container.querySelectorAll('article.message-bubble')).toHaveLength(0);
   });
 

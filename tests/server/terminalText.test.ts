@@ -67,6 +67,16 @@ describe('terminal frame classification', () => {
     expect(classifyTerminalStreamFrame('\rAssistant is typing')).toEqual({ kind: 'block-update', text: 'Assistant is typing' });
     expect(classifyTerminalStreamFrame('[?25l\r[2K✶ Herding… (10s · ↓ 10 tokens)[39m\r[2K')).toEqual({ kind: 'activity', activity: 'working' });
   });
+
+  it('does not classify Claude startup permission status as an interaction prompt', () => {
+    const raw = [
+      '你好！我可以帮你看代码、修 bug、实现功能、跑测试或解释项目。',
+      'Opus 4.7 xhigh Context: [██          ] 28k/250k (11%)',
+      '▸▸ bypass permissions on (shift+tab to cycle)',
+    ].join('\n');
+
+    expect(classifyTerminalStreamFrame(raw)).toEqual({ kind: 'activity', activity: 'working' });
+  });
 });
 
 describe('terminal output cleanup', () => {

@@ -18,6 +18,22 @@ describe('diffPaneCapture', () => {
     expect(diffPaneCapture('', 'first')).toBe('first');
     expect(diffPaneCapture('old content', 'new screen')).toBe('new screen');
   });
+
+  it('does not replay unchanged visible panes when tmux capture shifts by one line', () => {
+    const previous = [
+      'header',
+      '你好！我可以帮你看代码、修 bug、实现功能、跑测试或解释项目。',
+      'Opus 4.7 xhigh',
+      '▸▸ bypass permissions on (shift+tab to cycle)',
+    ].join('\n');
+    const next = [
+      '你好！我可以帮你看代码、修 bug、实现功能、跑测试或解释项目。',
+      'Opus 4.7 xhigh',
+      '▸▸ bypass permissions on (shift+tab to cycle)',
+    ].join('\n');
+
+    expect(diffPaneCapture(previous, next)).toBe('');
+  });
 });
 
 describe('TmuxPaneAdapter', () => {

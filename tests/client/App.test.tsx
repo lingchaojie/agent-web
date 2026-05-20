@@ -266,6 +266,18 @@ describe('App mobile drilldown', () => {
     expect(await screen.findByText('Restored after refresh')).toBeInTheDocument();
   });
 
+  it('clears stale selected sessions instead of opening an empty mobile chat pane', async () => {
+    localStorage.setItem('webagent.selectedProjectId', project.id);
+    localStorage.setItem('webagent.selectedSessionId', 'missing-session');
+    vi.mocked(listSessions).mockResolvedValue([]);
+    const { container } = render(<App />);
+
+    await screen.findByRole('button', { name: /demo/i });
+    await waitFor(() => expect(container.querySelector('.native-shell')).toHaveAttribute('data-mobile-pane', 'sessions'));
+    expect(localStorage.getItem('webagent.selectedSessionId')).toBeNull();
+    expect(screen.queryByText('选择或创建一个会话')).not.toBeInTheDocument();
+  });
+
   it('opens Claude history sessions as read-only JSONL transcript views', async () => {
     vi.mocked(listHistory).mockResolvedValue([
       historySession({

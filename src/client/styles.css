@@ -367,6 +367,18 @@ textarea:focus {
   gap: 0.52rem;
 }
 
+.project-group + .project-group {
+  margin-top: 1rem;
+}
+
+.project-group h3 {
+  margin: 0 0 0.48rem;
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-weight: 900;
+  letter-spacing: 0.05em;
+}
+
 .list-card,
 .history-card {
   width: 100%;
@@ -536,6 +548,16 @@ textarea:focus {
 
 .cli-region.user {
   border-left-color: var(--accent);
+}
+
+.cli-region.user-message {
+  width: fit-content;
+  max-width: min(42rem, 86%);
+  justify-self: end;
+  border: 1px solid var(--accent);
+  border-radius: 1rem;
+  padding: 0.65rem;
+  background: var(--accent-soft);
 }
 
 .cli-region.assistant[data-render-status='streaming'] {

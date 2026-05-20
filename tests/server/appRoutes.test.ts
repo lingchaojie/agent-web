@@ -97,6 +97,26 @@ describe('backend routes', () => {
     await app.close();
   });
 
+  it('marks projects with running external tmux clients as active-client workspaces', async () => {
+    const context = fakeContext();
+    context.sessions.listExternalSessions = vi.fn(() => [fakeSession({
+      id: 'external-1',
+      projectId: historyProjectId(root),
+      source: 'external-tmux',
+      externalCwd: root,
+      status: 'running',
+    })]);
+    const app = await createApp(context);
+
+    const listed = await app.inject({ method: 'GET', url: '/api/projects', headers: authHeaders() });
+
+    expect(listed.json()).toEqual([
+      expect.objectContaining({ id: historyProjectId(root), path: root, source: 'active-client' }),
+    ]);
+
+    await app.close();
+  });
+
   it('returns project-scoped slash command metadata without command bodies', async () => {
     const project = fakeProject({ id: 'project-1', path: root });
     mkdirSync(join(root, '.claude', 'commands', 'opsx'), { recursive: true });
@@ -1108,6 +1128,7 @@ function fakeContext(overrides: Partial<RouteContext['config']> = {}): RouteCont
     sessions: {
       listSessions: vi.fn(() => []),
       listRunningSessions: vi.fn(() => []),
+      listExternalSessions: vi.fn(() => []),
       createSession: vi.fn(),
       getSession: vi.fn(),
       findByClaudeSessionId: vi.fn(() => null),

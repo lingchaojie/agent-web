@@ -42,6 +42,19 @@ describe('claude semantic mapper', () => {
     ]);
   });
 
+  it('maps synthetic skill loader user entries into collapsible system blocks', () => {
+    expect(mapClaudeJsonlEntryToSemantic({
+      type: 'user',
+      timestamp: '2026-01-01T00:00:00.000Z',
+      message: {
+        role: 'user',
+        content: 'Base directory for this skill: /home/alvin/.claude/plugins/cache/example/skills/brainstorming\n\n# Brainstorming Ideas Into Designs\n\nFull prompt text',
+      },
+    })).toEqual([
+      expect.objectContaining({ kind: 'system', text: expect.stringContaining('Base directory for this skill:') }),
+    ]);
+  });
+
   it('keeps unknown structured events out of assistant prose', () => {
     const mapped = mapClaudeEventToSemantic({
       type: 'unknown-structured-entry',

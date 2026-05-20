@@ -98,9 +98,12 @@ export function mapClaudeJsonlEntryToSemantic(entry: ClaudeJsonlEntry): Semantic
   const content = entry.message?.content;
   if (Array.isArray(content)) return content.flatMap((part) => extractContentPart(role, part, entry));
 
+  const text = extractText(content);
+  if (role === 'user' && isSyntheticUserTranscript(text)) return textToBlockParts('system', text, entry);
+
   const kind = messageRoleToBlockKind(role);
   if (!kind) return [];
-  return textToBlockParts(kind, extractText(content), entry);
+  return textToBlockParts(kind, text, entry);
 }
 
 export function extractText(content: unknown): string {
@@ -142,6 +145,10 @@ function textToBlockParts(kind: ConversationBlockKind, text: string, entry: Clau
 function messageRoleToBlockKind(role: string | undefined): ConversationBlockKind | null {
   if (role === 'user' || role === 'assistant' || role === 'system' || role === 'tool') return role;
   return null;
+}
+
+function isSyntheticUserTranscript(text: string): boolean {
+  return text.startsWith('Base directory for this skill:') || text.startsWith('<system-reminder>') || text.startsWith('Called the ');
 }
 
 function toolText(name: string, input: unknown): string {

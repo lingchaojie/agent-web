@@ -229,8 +229,18 @@ export default function App() {
 
   function restoreSelectedSession(sessions: ClaudeSession[]) {
     const storedSessionId = localStorage.getItem('webagent.selectedSessionId');
+    if (!storedSessionId) return;
+
     const session = sessions.find((item) => item.id === storedSessionId) ?? null;
-    if (session) void selectSession(session);
+    if (session) {
+      void selectSession(session);
+      return;
+    }
+
+    localStorage.removeItem('webagent.selectedSessionId');
+    setSelectedChat(null);
+    setTranscript(null);
+    setMobilePane('sessions');
   }
 
   async function handleStopSession(session: ClaudeSession) {

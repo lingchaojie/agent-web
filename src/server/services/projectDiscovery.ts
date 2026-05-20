@@ -1,6 +1,6 @@
 import { existsSync, realpathSync, statSync } from 'node:fs';
 import { basename } from 'node:path';
-import type { HistorySession, Project } from '../../shared/types';
+import type { ClaudeSession, HistorySession, Project } from '../../shared/types';
 
 export const HISTORY_PROJECT_ID_PREFIX = 'history:';
 
@@ -18,7 +18,7 @@ export function projectPathFromHistoryId(id: string): string | null {
   }
 }
 
-export function mergeDiscoveredProjects(whitelistProjects: Project[], history: HistorySession[]): Project[] {
+export function mergeDiscoveredProjects(whitelistProjects: Project[], history: HistorySession[], externalSessions: ClaudeSession[] = []): Project[] {
   const byPath = new Map<string, Project>();
 
   for (const project of whitelistProjects) {
@@ -40,7 +40,24 @@ export function mergeDiscoveredProjects(whitelistProjects: Project[], history: H
     });
   }
 
+  for (const session of externalSessions) {
+    const path = session.externalCwd;
+    if (!path || session.status !== 'running' || !isAvailableProjectPath(path)) continue;
+    const existing = byPath.get(path);
+    byPath.set(path, {
+      id: existing?.id ?? historyProjectId(path),
+      name: existing?.name ?? projectName(path),
+      path,
+      favorite: existing?.favorite ?? false,
+      available: true,
+      source: 'active-client',
+      createdAt: existing?.createdAt ?? session.createdAt,
+      updatedAt: session.lastActiveAt,
+    });
+  }
+
   return [...byPath.values()].sort((a, b) => {
+    if (a.source !== b.source) return a.source === 'active-client' ? -1 : b.source === 'active-client' ? 1 : 0;
     if (a.favorite !== b.favorite) return a.favorite ? -1 : 1;
     return a.name.localeCompare(b.name);
   });

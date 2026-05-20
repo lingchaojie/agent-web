@@ -1,4 +1,4 @@
-export type ProjectSource = 'whitelist' | 'history';
+export type ProjectSource = 'whitelist' | 'history' | 'active-client';
 
 export type Project = {
   id: string;

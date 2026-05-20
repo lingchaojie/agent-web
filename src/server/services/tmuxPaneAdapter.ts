@@ -31,6 +31,8 @@ export function diffPaneCapture(previous: string, next: string): string {
   const nextLines = next.split('\n');
   const maxOverlap = Math.min(previousLines.length, nextLines.length);
 
+  if (isSuffixSubsequence(previousLines, nextLines)) return '';
+
   for (let overlap = maxOverlap; overlap > 0; overlap -= 1) {
     if (previousLines.slice(-overlap).join('\n') === nextLines.slice(0, overlap).join('\n')) {
       return nextLines.slice(overlap).join('\n').trim();
@@ -38,6 +40,14 @@ export function diffPaneCapture(previous: string, next: string): string {
   }
 
   return next.trim();
+}
+
+function isSuffixSubsequence(previousLines: string[], nextLines: string[]): boolean {
+  if (nextLines.length === 0 || nextLines.length > previousLines.length) return false;
+  for (let index = 0; index <= previousLines.length - nextLines.length; index += 1) {
+    if (previousLines.slice(index, index + nextLines.length).join('\n') === nextLines.join('\n')) return true;
+  }
+  return false;
 }
 
 async function defaultRun(command: string, args: string[]): Promise<string> {
