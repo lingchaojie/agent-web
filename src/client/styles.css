@@ -764,6 +764,87 @@ textarea:focus {
   padding: 0.42rem 0.82rem;
 }
 
+.composer-mode-button {
+  min-width: 3.25rem;
+  min-height: 2.35rem;
+  border-radius: 0.95rem;
+  padding: 0.42rem 0.7rem;
+}
+
+.voice-input-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.45rem;
+  min-height: 2.75rem;
+}
+
+.voice-hold-button {
+  width: 100%;
+  min-height: 3rem;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  color: var(--text);
+  background: var(--surface-muted);
+  font-weight: 800;
+  touch-action: none;
+  user-select: none;
+  transition: transform 140ms ease, background 140ms ease, border-color 140ms ease;
+}
+
+.voice-hold-button:not(:disabled):hover {
+  background: var(--accent-soft);
+}
+
+.voice-hold-button:not(:disabled):active,
+.voice-input-panel[data-voice-state='listening'] .voice-hold-button {
+  transform: scale(0.98);
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.voice-input-panel[data-voice-state='transcribing'] .voice-hold-button {
+  color: var(--warning);
+  background: var(--warning-bg);
+  border-color: #ead5a8;
+}
+
+.voice-input-panel[data-voice-state='error'] .voice-hold-button,
+.voice-input-panel[data-voice-state='unavailable'] .voice-hold-button {
+  color: var(--danger);
+  background: var(--danger-bg);
+  border-color: #e7bbb5;
+}
+
+.voice-cancel-button {
+  align-self: stretch;
+  white-space: nowrap;
+}
+
+.voice-status,
+.voice-interim,
+.voice-existing-text {
+  grid-column: 1 / -1;
+  margin: 0;
+  font-size: 0.8rem;
+}
+
+.voice-status,
+.voice-existing-text {
+  color: var(--muted);
+}
+
+.voice-interim {
+  color: var(--accent-strong);
+  font-weight: 700;
+}
+
+.voice-existing-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .slash-command-popover {
   position: absolute;
   right: 0.48rem;
@@ -934,7 +1015,20 @@ textarea:focus {
     border-radius: 1.15rem;
   }
 
-  .composer .primary-button {
+  .composer .primary-button,
+  .composer-mode-button {
+    width: 100%;
+  }
+
+  .voice-input-panel {
+    grid-template-columns: 1fr;
+  }
+
+  .voice-hold-button {
+    min-height: 3.6rem;
+  }
+
+  .voice-cancel-button {
     width: 100%;
   }
 }
