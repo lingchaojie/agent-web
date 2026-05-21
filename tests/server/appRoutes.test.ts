@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createApp, type RouteContext } from '../../src/server/app';
 import { historyProjectId } from '../../src/server/services/projectDiscovery';
 import { ClaudeResumeIndex } from '../../src/server/services/claudeResumeIndex';
-import type { ClaudeSession, Project, WsServerMessage } from '../../src/shared/types';
+import type { ClaudeSession, Project, TerminalServerMessage, WsServerMessage } from '../../src/shared/types';
 
 let root: string;
 
@@ -225,6 +225,7 @@ describe('backend routes', () => {
       title: 'New session',
     });
     expect(context.runner.start).toHaveBeenCalledWith({ sessionId: session.id, cwd: project.path, mode: 'new' });
+    expect(context.terminals.attach).not.toHaveBeenCalled();
     expect(context.runner.onEvent).toHaveBeenCalledWith(session.id, expect.any(Function));
     expect(context.runner.onFallbackOutput).toHaveBeenCalledWith(session.id, expect.any(Function));
     expect(context.runner.onExit).toHaveBeenCalledWith(session.id, expect.any(Function));
@@ -423,12 +424,12 @@ describe('backend routes', () => {
     await app.close();
   });
 
-  it('annotates history entries that already have matching app sessions', async () => {
+  it('annotates history entries that already have matching running app sessions', async () => {
     const projectsRoot = join(root, 'projects');
     const projectRoot = join(projectsRoot, '-tmp-demo');
     mkdirSync(projectRoot, { recursive: true });
     writeFileSync(join(projectRoot, 'claude-session.jsonl'), historyLine({ summary: 'Demo history', cwd: root }));
-    const existing = fakeSession({ id: 'session-existing', projectId: 'project-1', claudeSessionId: 'claude-session', status: 'running' });
+    const existing = fakeSession({ id: 'session-existing', projectId: historyProjectId(root), claudeSessionId: 'claude-session', status: 'running' });
     const context = fakeContext({ claudeConfigDir: root });
     context.projects.listProjects = vi.fn(() => [fakeProject({ id: 'project-1', path: root, available: true })]);
     context.sessions.findByClaudeSessionId = vi.fn(() => existing);
@@ -444,6 +445,29 @@ describe('backend routes', () => {
         appSession: expect.objectContaining({ id: 'session-existing', claudeSessionId: 'claude-session' }),
       }),
     ]);
+
+    await app.close();
+  });
+
+  it('does not annotate history entries with stopped or cross-project app sessions', async () => {
+    const projectsRoot = join(root, 'projects');
+    const projectRoot = join(projectsRoot, '-tmp-demo');
+    mkdirSync(projectRoot, { recursive: true });
+    writeFileSync(join(projectRoot, 'claude-session.jsonl'), historyLine({ summary: 'Demo history', cwd: root }));
+    const context = fakeContext({ claudeConfigDir: root });
+    context.projects.listProjects = vi.fn(() => [fakeProject({ id: 'project-1', path: root, available: true })]);
+    context.sessions.findByClaudeSessionId = vi.fn()
+      .mockReturnValueOnce(fakeSession({ id: 'stopped-session', projectId: historyProjectId(root), claudeSessionId: 'claude-session', status: 'stopped' }))
+      .mockReturnValueOnce(fakeSession({ id: 'other-project-session', projectId: 'other-project', claudeSessionId: 'claude-session', status: 'running' }));
+    const app = await createApp(context);
+
+    const stoppedResponse = await app.inject({ method: 'GET', url: '/api/history', headers: authHeaders() });
+    const crossProjectResponse = await app.inject({ method: 'GET', url: '/api/history', headers: authHeaders() });
+
+    expect(stoppedResponse.statusCode).toBe(200);
+    expect(stoppedResponse.json()[0]).not.toHaveProperty('appSessionId');
+    expect(crossProjectResponse.statusCode).toBe(200);
+    expect(crossProjectResponse.json()[0]).not.toHaveProperty('appSessionId');
 
     await app.close();
   });
@@ -929,7 +953,7 @@ describe('backend routes', () => {
     await app.close();
   });
 
-  it('returns existing app sessions instead of duplicating matching history resumes', async () => {
+  it('returns running app sessions instead of duplicating matching history resumes', async () => {
     const projectsRoot = join(root, 'projects');
     const historyProjectRoot = join(projectsRoot, '-tmp-history-demo');
     const discoveredProjectPath = join(root, 'history-demo');
@@ -957,6 +981,43 @@ describe('backend routes', () => {
     expect(context.sessions.createSession).not.toHaveBeenCalled();
     expect(context.sessions.appendBlock).not.toHaveBeenCalled();
     expect(context.runner.start).not.toHaveBeenCalled();
+
+    await app.close();
+  });
+
+  it('starts a new resume session when a matching app session is stopped', async () => {
+    const projectsRoot = join(root, 'projects');
+    const historyProjectRoot = join(projectsRoot, '-tmp-history-demo');
+    const discoveredProjectPath = join(root, 'history-demo');
+    mkdirSync(historyProjectRoot, { recursive: true });
+    mkdirSync(discoveredProjectPath, { recursive: true });
+    writeFileSync(join(historyProjectRoot, 'history-session.jsonl'), historyLine({ summary: 'History demo', cwd: discoveredProjectPath }));
+    const projectId = `history:${Buffer.from(discoveredProjectPath).toString('base64url')}`;
+    const stoppedExisting = fakeSession({ id: 'session-stopped', projectId, source: 'web-created', claudeSessionId: 'history-session', status: 'stopped' });
+    const resumed = fakeSession({ id: 'session-resumed', projectId, source: 'claude-history', claudeSessionId: 'history-session', title: 'History demo' });
+    const context = fakeContext({ claudeConfigDir: root });
+    context.projects.getProject = vi.fn(() => null);
+    context.projects.listProjects = vi.fn(() => []);
+    context.sessions.findByClaudeSessionId = vi.fn(() => stoppedExisting);
+    context.sessions.createSession = vi.fn(() => resumed);
+    context.sessions.getSession = vi.fn(() => ({ ...resumed, status: 'running' as const }));
+    const app = await createApp(context);
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/sessions/resume',
+      headers: authHeaders(),
+      payload: { projectId, claudeSessionId: 'history-session', title: 'History demo' },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(context.sessions.createSession).toHaveBeenCalledWith({
+      projectId,
+      source: 'claude-history',
+      claudeSessionId: 'history-session',
+      title: 'History demo',
+    });
+    expect(context.runner.start).toHaveBeenCalledWith({ sessionId: resumed.id, cwd: discoveredProjectPath, mode: 'resume', claudeSessionId: 'history-session' });
 
     await app.close();
   });
@@ -1018,6 +1079,114 @@ describe('backend routes', () => {
 
     await expect(app.injectWS('/api/ws', { headers: { host: 'localhost' } })).rejects.toThrow('Unexpected server response: 401');
 
+    await app.close();
+  });
+
+  it('allows terminal websocket attachments with a protocol token', async () => {
+    const session = fakeSession({ id: 'session-1', status: 'running' });
+    const context = fakeContext();
+    context.sessions.getSession = vi.fn(() => session);
+    const app = await createApp(context);
+    await app.ready();
+    const client = await app.injectWS('/api/terminal/ws', { headers: { host: 'localhost', 'sec-websocket-protocol': `webagent, ${protocolToken()}` } });
+    const messages = collectTerminalWsMessages(client);
+
+    client.send(JSON.stringify({ type: 'attach', sessionId: session.id, cols: 120, rows: 40 }));
+    await waitUntil(() => vi.mocked(context.terminals.attach).mock.calls.length > 0 && messages.length > 0);
+
+    expect(context.terminals.attach).toHaveBeenCalledWith({ sessionId: session.id, cols: 120, rows: 40 }, expect.any(Function));
+    expect(messages).toEqual([{ type: 'status', sessionId: session.id, status: 'attached' }]);
+
+    client.close();
+    await app.close();
+  });
+
+  it('rejects terminal websocket connections without auth', async () => {
+    const context = fakeContext();
+    const app = await createApp(context);
+    await app.ready();
+
+    await expect(app.injectWS('/api/terminal/ws', { headers: { host: 'localhost' } })).rejects.toThrow('Unexpected server response: 401');
+
+    await app.close();
+  });
+
+  it('sends unavailable and stopped statuses when terminal attach cannot start', async () => {
+    const stoppedSession = fakeSession({ id: 'session-2', status: 'stopped' });
+    const context = fakeContext();
+    context.sessions.getSession = vi.fn((sessionId: string) => {
+      if (sessionId === 'session-1') return null;
+      if (sessionId === 'session-2') return stoppedSession;
+      return null;
+    });
+    const app = await createApp(context);
+    await app.ready();
+    const client = await app.injectWS('/api/terminal/ws', { headers: { ...authHeaders(), host: 'localhost' } });
+    const messages = collectTerminalWsMessages(client);
+
+    client.send(JSON.stringify({ type: 'attach', sessionId: 'session-1' }));
+    await waitUntil(() => messages.length > 0);
+    client.send(JSON.stringify({ type: 'attach', sessionId: 'session-2' }));
+    await waitUntil(() => messages.length > 1);
+
+    expect(messages).toEqual([
+      { type: 'status', sessionId: 'session-1', status: 'unavailable', message: 'Session not found.' },
+      { type: 'status', sessionId: 'session-2', status: 'stopped', message: 'Session is not running.' },
+    ]);
+    expect(context.terminals.attach).not.toHaveBeenCalled();
+
+    client.close();
+    await app.close();
+  });
+
+  it('forwards terminal input resize and close to the active attach', async () => {
+    const session = fakeSession({ id: 'session-1', status: 'running' });
+    const sendInput = vi.fn();
+    const resize = vi.fn();
+    const detach = vi.fn();
+    const context = fakeContext();
+    context.sessions.getSession = vi.fn(() => session);
+    context.terminals.attach = vi.fn((_input, send) => {
+      send({ type: 'status', sessionId: session.id, status: 'attached' });
+      return { sendInput, resize, detach };
+    });
+    const app = await createApp(context);
+    await app.ready();
+    const client = await app.injectWS('/api/terminal/ws', { headers: { ...authHeaders(), host: 'localhost' } });
+    const messages = collectTerminalWsMessages(client);
+
+    client.send(JSON.stringify({ type: 'attach', sessionId: session.id, cols: 100, rows: 30 }));
+    await waitUntil(() => messages.length > 0);
+    client.send(JSON.stringify({ type: 'input', sessionId: session.id, data: 'ls\n' }));
+    client.send(JSON.stringify({ type: 'resize', sessionId: session.id, cols: 140, rows: 50 }));
+    client.send(JSON.stringify({ type: 'detach', sessionId: session.id }));
+    await waitUntil(() => detach.mock.calls.length > 0 && messages.length > 1);
+
+    expect(sendInput).toHaveBeenCalledWith('ls\n');
+    expect(resize).toHaveBeenCalledWith(140, 50);
+    expect(detach).toHaveBeenCalledTimes(1);
+    expect(messages).toEqual([
+      { type: 'status', sessionId: session.id, status: 'attached' },
+      { type: 'status', sessionId: session.id, status: 'detached' },
+    ]);
+
+    client.close();
+    await app.close();
+  });
+
+  it('sends terminal websocket error messages for invalid JSON instead of throwing', async () => {
+    const context = fakeContext();
+    const app = await createApp(context);
+    await app.ready();
+    const client = await app.injectWS('/api/terminal/ws', { headers: { ...authHeaders(), host: 'localhost' } });
+    const messages = collectTerminalWsMessages(client);
+
+    client.send('{not-json');
+    await waitUntil(() => messages.length > 0);
+
+    expect(messages).toEqual([{ type: 'error', message: 'Invalid JSON' }]);
+
+    client.close();
     await app.close();
   });
 
@@ -1156,6 +1325,12 @@ function fakeContext(overrides: Partial<RouteContext['config']> = {}): RouteCont
       disconnectExternalSession: vi.fn(),
       broadcastStatus: vi.fn(),
     } as unknown as RouteContext['hub'],
+    terminals: {
+      attach: vi.fn((_input, send) => {
+        send({ type: 'status', sessionId: _input.sessionId, status: 'attached' });
+        return { sendInput: vi.fn(), resize: vi.fn(), detach: vi.fn() };
+      }),
+    } as unknown as RouteContext['terminals'],
     resumeIndex: new ClaudeResumeIndex(root),
     transcripts: {
       normalizeEntrypoint: vi.fn(),
@@ -1195,6 +1370,14 @@ function collectWsMessages(client: { on(event: 'message', listener: (data: Buffe
   const messages: WsServerMessage[] = [];
   client.on('message', (data: Buffer) => {
     messages.push(JSON.parse(data.toString()) as WsServerMessage);
+  });
+  return messages;
+}
+
+function collectTerminalWsMessages(client: { on(event: 'message', listener: (data: Buffer) => void): void }): TerminalServerMessage[] {
+  const messages: TerminalServerMessage[] = [];
+  client.on('message', (data: Buffer) => {
+    messages.push(JSON.parse(data.toString()) as TerminalServerMessage);
   });
   return messages;
 }

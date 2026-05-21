@@ -1,8 +1,8 @@
 /** @vitest-environment jsdom */
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import App from '../../src/client/App';
-import type { ClaudeSession, ConversationBlock, HistorySession, Project, SessionViewState, TranscriptWindow } from '../../src/shared/types';
+import type { ClaudeSession, HistorySession, Project, TranscriptWindow } from '../../src/shared/types';
 
 vi.mock('../../src/client/api', () => ({
   checkAuth: vi.fn(),
@@ -11,14 +11,34 @@ vi.mock('../../src/client/api', () => ({
   listHistory: vi.fn(),
   listProjects: vi.fn(),
   listSessions: vi.fn(),
-  listSlashCommands: vi.fn(),
   loadHistoryTranscript: vi.fn(),
-  loadSessionTranscript: vi.fn(),
   resumeSession: vi.fn(),
   stopSession: vi.fn(),
-  openSessionSocket: vi.fn(),
-  sendWs: vi.fn(),
 }));
+
+const terminalMockState = vi.hoisted(() => ({
+  nextInstanceId: 0,
+  unmounts: [] as string[],
+}));
+
+vi.mock('../../src/client/components/TerminalView', async () => {
+  const React = await import('react');
+  return {
+    default: ({ sessionId, title, onBack }: { sessionId: string; title: string; onBack(): void }) => {
+      const instanceId = React.useRef(`${sessionId}-${++terminalMockState.nextInstanceId}`).current;
+      React.useEffect(() => () => {
+        terminalMockState.unmounts.push(instanceId);
+      }, [instanceId]);
+      return (
+        <section aria-label="Claude Code terminal" data-instance-id={instanceId}>
+          <h3>{title}</h3>
+          <p>terminal session: {sessionId}</p>
+          <button type="button" onClick={onBack}>返回会话</button>
+        </section>
+      );
+    },
+  };
+});
 
 import {
   checkAuth,
@@ -26,24 +46,10 @@ import {
   listHistory,
   listProjects,
   listSessions,
-  listSlashCommands,
   loadHistoryTranscript,
-  loadSessionTranscript,
-  openSessionSocket,
   resumeSession,
   stopSession,
 } from '../../src/client/api';
-
-class FakeWebSocket extends EventTarget {
-  readyState = 1;
-  close = vi.fn();
-}
-
-let socket: FakeWebSocket;
-
-function serverMessage(message: unknown): MessageEvent {
-  return new MessageEvent('message', { data: JSON.stringify(message) });
-}
 
 const project: Project = {
   id: 'history:L3RtcC9kZW1v',
@@ -67,80 +73,95 @@ const session: ClaudeSession = {
   createdAt: '2026-01-01T00:00:00.000Z',
 };
 
-function sessionView(overrides: Partial<SessionViewState> = {}): SessionViewState {
-  return {
-    sessionId: session.id,
-    projectId: session.projectId,
-    title: session.title,
-    lifecycle: 'running',
-    activity: 'idle',
-    connection: 'connected',
-    transcriptSource: 'structured',
-    claudeSessionId: null,
-    latestSequence: 0,
-    updatedAt: '2026-01-01T00:00:00.000Z',
-    pendingInteraction: null,
-    ...overrides,
-  };
-}
-
-function block(overrides: Partial<ConversationBlock> = {}): ConversationBlock {
-  return {
-    id: 'block-1',
-    sessionId: session.id,
-    kind: 'assistant',
-    text: '',
-    sequence: 1,
-    status: 'final',
-    createdAt: '2026-01-01T00:00:00.000Z',
-    updatedAt: '2026-01-01T00:00:00.000Z',
-    source: 'live',
-    ...overrides,
-  };
-}
-
-function transcriptWindow(overrides: Partial<TranscriptWindow> = {}): TranscriptWindow {
-  return {
-    sessionId: 'native-session',
-    projectKey: '-tmp-demo',
-    projectPath: project.path,
-    title: 'Native transcript',
-    updatedAt: '2026-01-01T00:00:00.000Z',
-    regions: [],
-    olderCursor: null,
-    hasMoreOlder: false,
-    ...overrides,
-  };
-}
-
-function historySession(overrides: Partial<HistorySession> = {}): HistorySession {
-  return {
-    projectKey: project.id,
-    projectPath: project.path,
-    sessionId: 'history-session-1',
-    transcriptPath: '/tmp/demo/history-session-1.jsonl',
-    title: 'Demo history',
-    lastMessage: 'Pick up the prior task',
-    updatedAt: '2026-01-01T00:00:00.000Z',
-    blocks: [],
-    ...overrides,
-  };
-}
-
-describe('App mobile drilldown', () => {
+describe('App terminal-first session flow', () => {
   beforeEach(() => {
     localStorage.clear();
+    terminalMockState.nextInstanceId = 0;
+    terminalMockState.unmounts = [];
     vi.mocked(checkAuth).mockResolvedValue(true);
     vi.mocked(listProjects).mockResolvedValue([project]);
     vi.mocked(listHistory).mockResolvedValue([]);
     vi.mocked(listSessions).mockResolvedValue([]);
-    vi.mocked(listSlashCommands).mockResolvedValue({ projectId: project.id, commands: [] });
     vi.mocked(loadHistoryTranscript).mockResolvedValue(transcriptWindow());
-    vi.mocked(loadSessionTranscript).mockResolvedValue(transcriptWindow());
     vi.mocked(createSession).mockResolvedValue(session);
+    vi.mocked(resumeSession).mockResolvedValue({ ...session, id: 'resumed-session', source: 'claude-history', claudeSessionId: 'history-session-1', title: 'Demo history' });
     vi.mocked(stopSession).mockResolvedValue({ ...session, status: 'stopped' });
-    socket = new FakeWebSocket();
-    vi.mocked(openSessionSocket).mockReturnValue(socket as unknown as WebSocket);
+  });
+
+  it('renders the responsive shell and opens new sessions directly in terminal view', async () => {
+    const { container } = render(<App />);
+
+    await screen.findByText('项目');
+    expect(screen.getByRole('button', { name: '刷新' })).toBeInTheDocument();
+    await screen.findByRole('button', { name: /demo/i });
+    const shell = container.querySelector('.native-shell');
+    expect(shell).toHaveAttribute('data-native-shell', 'app');
+    expect(shell).toHaveAttribute('data-mobile-pane', 'projects');
+
+    fireEvent.click(screen.getByRole('button', { name: /demo/i }));
+    expect(shell).toHaveAttribute('data-mobile-pane', 'sessions');
+
+    fireEvent.click(screen.getByRole('button', { name: '新建会话' }));
+
+    await waitFor(() => expect(createSession).toHaveBeenCalledWith(project.id));
+    await waitFor(() => expect(shell).toHaveAttribute('data-mobile-pane', 'chat'));
+    expect(await screen.findByRole('region', { name: 'Claude Code terminal' })).toBeInTheDocument();
+    expect(screen.getByText(`terminal session: ${session.id}`)).toBeInTheDocument();
+    expect(screen.queryByPlaceholderText('输入要发送给 Claude Code 的内容...')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '打开终端模式' })).not.toBeInTheDocument();
+  });
+
+  it('opens running sessions directly in terminal view and can return to sessions', async () => {
+    vi.mocked(listSessions).mockResolvedValue([session]);
+    const { container } = render(<App />);
+
+    await clickProject();
+    fireEvent.click(await screen.findByText('New session'));
+
+    expect(await screen.findByRole('region', { name: 'Claude Code terminal' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '返回会话' }));
+    expect(container.querySelector('.native-shell')).toHaveAttribute('data-mobile-pane', 'sessions');
+  });
+
+  it('keeps a running terminal mounted while navigating away and back', async () => {
+    vi.mocked(listSessions).mockResolvedValue([session]);
+    vi.mocked(listHistory).mockResolvedValue([historySession()]);
+    vi.mocked(loadHistoryTranscript).mockResolvedValue(transcriptWindow({
+      title: 'Demo history',
+      regions: [{ id: 'history-1', kind: 'user', text: 'Historical prompt', status: 'final', source: 'history', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' }],
+    }));
+    const { container } = render(<App />);
+
+    await clickProject();
+    fireEvent.click(await liveSessionButton());
+    const terminal = await screen.findByRole('region', { name: 'Claude Code terminal' });
+    const instanceId = terminal.getAttribute('data-instance-id');
+
+    fireEvent.click(screen.getByRole('button', { name: '返回会话' }));
+    fireEvent.click(screen.getByRole('button', { name: '← 项目' }));
+    await clickProject();
+    fireEvent.click(await liveSessionButton());
+    expect(screen.getByRole('region', { name: 'Claude Code terminal' })).toHaveAttribute('data-instance-id', instanceId);
+
+    fireEvent.click(screen.getByRole('button', { name: '返回会话' }));
+    fireEvent.click(await screen.findByRole('button', { name: /Demo history Pick up the prior task/i }));
+    expect(await screen.findByText('Historical prompt')).toBeInTheDocument();
+    fireEvent.click(await liveSessionButton());
+
+    expect(container.querySelector('.native-shell')).toHaveAttribute('data-mobile-pane', 'chat');
+    expect(screen.getByRole('region', { name: 'Claude Code terminal' })).toHaveAttribute('data-instance-id', instanceId);
+    expect(terminalMockState.unmounts).toEqual([]);
+  });
+
+  it('restores the selected running session into terminal view after refresh', async () => {
+    localStorage.setItem('webagent.selectedProjectId', project.id);
+    localStorage.setItem('webagent.selectedSessionId', session.id);
+    vi.mocked(listSessions).mockResolvedValue([session]);
+    const { container } = render(<App />);
+
+    expect(await screen.findByRole('region', { name: 'Claude Code terminal' })).toBeInTheDocument();
+    expect(screen.getByText(`terminal session: ${session.id}`)).toBeInTheDocument();
+    expect(container.querySelector('.native-shell')).toHaveAttribute('data-mobile-pane', 'chat');
   });
 
   it('stops running sessions and removes them from the live list', async () => {
@@ -175,95 +196,7 @@ describe('App mobile drilldown', () => {
     fireEvent.click(screen.getByRole('button', { name: '刷新' }));
 
     expect(await screen.findByText('webagent-claude')).toBeInTheDocument();
-    expect(screen.getByText(/external tmux · %0/i)).toBeInTheDocument();
-  });
-
-  it('renders a native Claude shell with sidebar, session rail, conversation canvas, and mobile drawer state', async () => {
-    const { container } = render(<App />);
-
-    await screen.findByText('项目');
-    expect(screen.getByRole('button', { name: '刷新' })).toBeInTheDocument();
-    await screen.findByRole('button', { name: /demo/i });
-    const shell = container.querySelector('.native-shell');
-    expect(shell).toHaveAttribute('data-native-shell', 'app');
-    expect(shell).toHaveAttribute('data-mobile-pane', 'projects');
-    expect(container.querySelector('.workspace-sidebar')).toBeInTheDocument();
-    expect(container.querySelector('.session-rail')).toBeInTheDocument();
-    expect(container.querySelector('.conversation-canvas')).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole('button', { name: /demo/i }));
-    expect(shell).toHaveAttribute('data-mobile-pane', 'sessions');
-
-    fireEvent.click(screen.getByRole('button', { name: '新建会话' }));
-    await waitFor(() => expect(shell).toHaveAttribute('data-mobile-pane', 'chat'));
-    expect(await screen.findByRole('heading', { name: 'New session' })).toBeInTheDocument();
-  });
-
-  it('shows working, idle, and stop controls for the active chat session', async () => {
-    render(<App />);
-
-    fireEvent.click(await screen.findByRole('button', { name: /demo/i }));
-    fireEvent.click(screen.getByRole('button', { name: '新建会话' }));
-    await screen.findByRole('heading', { name: 'New session' });
-    socket.dispatchEvent(new Event('open'));
-    socket.dispatchEvent(serverMessage({ type: 'snapshot', sessionId: session.id, sequence: 1, session: sessionView({ latestSequence: 1 }), blocks: [] }));
-    await screen.findByText('connected');
-
-    expect(await screen.findByText('等待输入')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '停止' })).toBeInTheDocument();
-
-    fireEvent.change(screen.getByPlaceholderText('输入要发送给 Claude Code 的内容...'), { target: { value: '你好' } });
-    fireEvent.click(screen.getByRole('button', { name: '发送' }));
-
-    expect(screen.getByText('工作中')).toBeInTheDocument();
-    socket.dispatchEvent(serverMessage({ type: 'activity-changed', sessionId: session.id, sequence: 2, activity: 'idle' }));
-
-    expect(await screen.findByText('等待输入')).toBeInTheDocument();
-  });
-
-  it('renders repeated transient activity as one stable indicator without assistant bubbles', async () => {
-    const { container } = render(<App />);
-
-    fireEvent.click(await screen.findByRole('button', { name: /demo/i }));
-    fireEvent.click(screen.getByRole('button', { name: '新建会话' }));
-    await screen.findByRole('heading', { name: 'New session' });
-    socket.dispatchEvent(new Event('open'));
-    socket.dispatchEvent(serverMessage({ type: 'snapshot', sessionId: session.id, sequence: 1, session: sessionView({ latestSequence: 1 }), blocks: [] }));
-    await screen.findByText('connected');
-
-    socket.dispatchEvent(serverMessage({ type: 'activity-changed', sessionId: session.id, sequence: 2, activity: 'working' }));
-    socket.dispatchEvent(serverMessage({ type: 'activity-changed', sessionId: session.id, sequence: 3, activity: 'working' }));
-
-    expect(await screen.findByText('Claude 正在处理…')).toBeInTheDocument();
-    expect(container.querySelectorAll('article.message-bubble.assistant')).toHaveLength(0);
-
-    socket.dispatchEvent(serverMessage({ type: 'block-added', sessionId: session.id, sequence: 4, block: block({ id: 'assistant-1', text: '完成', sequence: 4 }) }));
-    socket.dispatchEvent(serverMessage({ type: 'activity-changed', sessionId: session.id, sequence: 5, activity: 'idle' }));
-
-    expect(await screen.findByText('等待输入')).toBeInTheDocument();
-    expect(screen.queryByText('Claude 正在处理…')).not.toBeInTheDocument();
-  });
-
-  it('restores the selected running session after a refresh and replays its snapshot', async () => {
-    localStorage.setItem('webagent.selectedProjectId', project.id);
-    localStorage.setItem('webagent.selectedSessionId', session.id);
-    vi.mocked(listSessions).mockResolvedValue([session]);
-    const { container } = render(<App />);
-
-    expect(await screen.findByRole('heading', { name: 'New session' })).toBeInTheDocument();
-    expect(container.querySelector('.native-shell')).toHaveAttribute('data-mobile-pane', 'chat');
-    await waitFor(() => expect(openSessionSocket).toHaveBeenCalled());
-
-    socket.dispatchEvent(new Event('open'));
-    socket.dispatchEvent(serverMessage({
-      type: 'snapshot',
-      sessionId: session.id,
-      sequence: 4,
-      session: sessionView({ latestSequence: 4 }),
-      blocks: [block({ id: 'restored-after-refresh', text: 'Restored after refresh', sequence: 4 })],
-    }));
-
-    expect(await screen.findByText('Restored after refresh')).toBeInTheDocument();
+    expect(screen.queryByText(/external tmux/i)).not.toBeInTheDocument();
   });
 
   it('clears stale selected sessions instead of opening an empty mobile chat pane', async () => {
@@ -275,10 +208,10 @@ describe('App mobile drilldown', () => {
     await screen.findByRole('button', { name: /demo/i });
     await waitFor(() => expect(container.querySelector('.native-shell')).toHaveAttribute('data-mobile-pane', 'sessions'));
     expect(localStorage.getItem('webagent.selectedSessionId')).toBeNull();
-    expect(screen.queryByText('选择或创建一个会话')).not.toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: 'Claude Code terminal' })).not.toBeInTheDocument();
   });
 
-  it('opens Claude history sessions as read-only JSONL transcript views', async () => {
+  it('clicks a history entry body to view the read-only transcript', async () => {
     vi.mocked(listHistory).mockResolvedValue([
       historySession({
         sessionId: 'history-session',
@@ -295,32 +228,31 @@ describe('App mobile drilldown', () => {
         { id: 'history-2', kind: 'assistant', text: 'Historical response', status: 'final', source: 'history', createdAt: '2026-01-01T00:01:00.000Z', updatedAt: '2026-01-01T00:01:00.000Z' },
       ],
     }));
-    const { container } = render(<App />);
+    render(<App />);
 
-    fireEvent.click(await screen.findByRole('button', { name: /demo/i }));
-    fireEvent.click(await screen.findByRole('button', { name: '打开' }));
+    await clickProject();
+    fireEvent.click(await screen.findByRole('button', { name: /History session Latest historical response/i }));
 
     await waitFor(() => expect(loadHistoryTranscript).toHaveBeenCalledWith('history-session', { limit: 50 }));
     expect(await screen.findByRole('heading', { name: 'History session', level: 2 })).toBeInTheDocument();
     expect(screen.getByText('Historical prompt')).toBeInTheDocument();
     expect(screen.getByText('Historical response')).toBeInTheDocument();
-    expect(container.querySelectorAll('.transcript-window .cli-render-surface')).toHaveLength(1);
   });
 
-  it('opens live app sessions with native identity as transcript-capable views', async () => {
-    const nativeSession = { ...session, claudeSessionId: 'native-session' };
-    vi.mocked(listSessions).mockResolvedValue([nativeSession]);
-    vi.mocked(loadSessionTranscript).mockResolvedValue(transcriptWindow({
-      sessionId: 'native-session',
-      regions: [{ id: 'native-1', kind: 'user', text: 'Native transcript prompt', status: 'final', source: 'history', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' }],
-    }));
+  it('clicks a history open button to resume into terminal view', async () => {
+    const history = historySession();
+    const resumed = { ...session, id: 'resumed-session', source: 'claude-history' as const, claudeSessionId: history.sessionId, title: history.title };
+    vi.mocked(listHistory).mockResolvedValue([history]);
+    vi.mocked(resumeSession).mockResolvedValue(resumed);
     render(<App />);
 
-    fireEvent.click(await screen.findByRole('button', { name: /demo/i }));
-    fireEvent.click(await screen.findByText('New session'));
+    await clickProject();
+    fireEvent.click(await screen.findByRole('button', { name: '打开' }));
 
-    await waitFor(() => expect(loadSessionTranscript).toHaveBeenCalledWith(nativeSession.id, { limit: 50 }));
-    expect(await screen.findByText('Native transcript prompt')).toBeInTheDocument();
+    await waitFor(() => expect(resumeSession).toHaveBeenCalledWith(project.id, history.sessionId, history.title));
+    expect(await screen.findByRole('region', { name: 'Claude Code terminal' })).toBeInTheDocument();
+    expect(screen.getByText('terminal session: resumed-session')).toBeInTheDocument();
+    expect(loadHistoryTranscript).not.toHaveBeenCalled();
   });
 
   it('prepends older transcript regions when loading more history', async () => {
@@ -349,40 +281,51 @@ describe('App mobile drilldown', () => {
       }));
     render(<App />);
 
-    fireEvent.click(await screen.findByRole('button', { name: /demo/i }));
-    fireEvent.click(await screen.findByRole('button', { name: '打开' }));
+    await clickProject();
+    fireEvent.click(await screen.findByRole('button', { name: /History session Latest historical response/i }));
     fireEvent.click(await screen.findByRole('button', { name: '加载更早历史' }));
 
     await waitFor(() => expect(loadHistoryTranscript).toHaveBeenLastCalledWith('history-session', { limit: 50, before: '1' }));
     expect(await screen.findByText('Older prompt')).toBeInTheDocument();
     expect(screen.getByText('Newer response')).toBeInTheDocument();
   });
-
-  it('loads project-scoped slash commands and resumes history from the chat composer', async () => {
-    const history = historySession();
-    const resumed = { ...session, id: 'resumed-session', source: 'claude-history' as const, claudeSessionId: history.sessionId, title: history.title };
-    vi.mocked(listHistory).mockResolvedValue([history]);
-    vi.mocked(listSlashCommands).mockResolvedValue({
-      projectId: project.id,
-      commands: [{ name: '/resume', title: 'Resume session', description: 'Resume history', scope: 'app', behavior: 'app-owned', support: 'supported', aliases: [] }],
-    });
-    vi.mocked(createSession).mockResolvedValue(session);
-    vi.mocked(resumeSession).mockResolvedValue(resumed);
-    vi.mocked(loadSessionTranscript).mockResolvedValue(transcriptWindow({ sessionId: history.sessionId, title: history.title }));
-    render(<App />);
-
-    fireEvent.click(await screen.findByRole('button', { name: /demo/i }));
-    await waitFor(() => expect(listSlashCommands).toHaveBeenCalledWith(project.id));
-    fireEvent.click(screen.getByRole('button', { name: '新建会话' }));
-    await screen.findByRole('heading', { name: 'New session' });
-    socket.dispatchEvent(new Event('open'));
-
-    const composer = screen.getByPlaceholderText('输入要发送给 Claude Code 的内容...');
-    fireEvent.change(composer, { target: { value: '/resume' } });
-    fireEvent.keyDown(composer, { key: 'Enter' });
-    fireEvent.click(await screen.findByRole('option', { name: /Demo history/ }));
-
-    await waitFor(() => expect(resumeSession).toHaveBeenCalledWith(project.id, history.sessionId, history.title));
-    expect(await screen.findByRole('heading', { name: 'Demo history', level: 2 })).toBeInTheDocument();
-  });
 });
+
+async function clickProject() {
+  const workspace = await screen.findByRole('complementary', { name: '工作区' });
+  fireEvent.click(await within(workspace).findByRole('button', { name: /demo/i }));
+}
+
+async function liveSessionButton() {
+  const sessionRail = await screen.findByRole('complementary', { name: '会话' });
+  const buttons = await within(sessionRail).findAllByRole('button', { name: /New session/i });
+  return buttons.find((button) => button.className.includes('session-open-button')) ?? buttons[0];
+}
+
+function transcriptWindow(overrides: Partial<TranscriptWindow> = {}): TranscriptWindow {
+  return {
+    sessionId: 'native-session',
+    projectKey: '-tmp-demo',
+    projectPath: project.path,
+    title: 'Native transcript',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+    regions: [],
+    olderCursor: null,
+    hasMoreOlder: false,
+    ...overrides,
+  };
+}
+
+function historySession(overrides: Partial<HistorySession> = {}): HistorySession {
+  return {
+    projectKey: project.id,
+    projectPath: project.path,
+    sessionId: 'history-session-1',
+    transcriptPath: '/tmp/demo/history-session-1.jsonl',
+    title: 'Demo history',
+    lastMessage: 'Pick up the prior task',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+    blocks: [],
+    ...overrides,
+  };
+}

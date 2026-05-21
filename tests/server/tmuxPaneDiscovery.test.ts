@@ -28,6 +28,15 @@ describe('tmux pane discovery', () => {
     expect(exposedTmuxPanes(panes).map((pane) => pane.paneId)).toEqual(['%12', '%14']);
   });
 
+  it('excludes app-owned webagent tmux sessions from external discovery', () => {
+    const panes = parseTmuxPaneList([
+      ['%20', 'webagent-session-1', 'claude', 'claude', '/tmp/demo', '1', '/tmp/tmux-1000/default'].join('\t'),
+      ['%21', 'main', 'webagent-claude', 'bash', '/tmp/demo', '', '/tmp/tmux-1000/default'].join('\t'),
+    ].join('\n'));
+
+    expect(exposedTmuxPanes(panes).map((pane) => pane.paneId)).toEqual(['%21']);
+  });
+
   it('builds a stable external key', () => {
     const [pane] = parseTmuxPaneList(formatLine);
 

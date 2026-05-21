@@ -1,299 +1,118 @@
-import { useEffect, useRef, useState } from 'react';
-import type { ClaudeSession, ConversationBlock, HistorySession, ParsedInteraction, SessionActivity, SessionStatus, SessionStreamEvent, SessionViewState, SlashCommandEntry, TranscriptWindow, WsServerMessage } from '../../shared/types';
-import { applySessionStreamEvent, emptySessionStreamState } from '../../shared/sessionStream';
-import { openSessionSocket, sendWs } from '../api';
-import MessageStream from './MessageStream';
-import PromptActions from './PromptActions';
-import SessionRenderSurface from './SessionRenderSurface';
+import type { ClaudeSession, TranscriptWindow } from '../../shared/types';
+import TerminalView from './TerminalView';
 import TranscriptView from './TranscriptView';
-import ChatComposer from './ChatComposer';
-import SessionStatusline from './SessionStatusline';
 
-type DisplaySession = Pick<ClaudeSession, 'id' | 'title' | 'status'> & Partial<ClaudeSession>;
+type DisplaySession = Pick<ClaudeSession, 'id' | 'title' | 'status'> & Partial<ClaudeSession> & { historySessionId?: string };
 
 type ChatViewProps = {
   session: DisplaySession | null;
   transcript?: TranscriptWindow | null;
   transcriptLoadingOlder?: boolean;
-  commandEntries?: SlashCommandEntry[];
-  resumeCandidates?: HistorySession[];
   onLoadOlderTranscript?(): void;
-  onOpenHistorySession?(session: HistorySession): void;
-  onStatusChange(sessionId: string, status: SessionStatus): void;
   onBackToSessions(): void;
   onStop(session: ClaudeSession): void;
+  persistentTerminals?: ClaudeSession[];
 };
 
-type ConnectionState = 'idle' | 'connecting' | 'connected' | 'reconnecting' | 'disconnected';
-
-export default function ChatView({ session, transcript, transcriptLoadingOlder = false, commandEntries = [], resumeCandidates = [], onLoadOlderTranscript = () => undefined, onOpenHistorySession, onStatusChange, onBackToSessions, onStop }: ChatViewProps) {
-  const [streamState, setStreamState] = useState(emptySessionStreamState);
-  const [interaction, setInteraction] = useState<ParsedInteraction | null>(null);
-  const [input, setInput] = useState('');
-  const [connectionState, setConnectionState] = useState<ConnectionState>('idle');
-  const [activity, setActivity] = useState<SessionActivity>('stopped');
-  const [lifecycle, setLifecycle] = useState<SessionViewState['lifecycle'] | null>(null);
-  const [visibleError, setVisibleError] = useState('');
-  const socketRef = useRef<WebSocket | null>(null);
-  const latestSequenceRef = useRef(0);
-
-  useEffect(() => {
-    setStreamState(emptySessionStreamState());
-    setInteraction(null);
-    setActivity(session?.status === 'running' ? 'idle' : 'stopped');
-    setLifecycle(session?.status ?? null);
-    setVisibleError('');
-    latestSequenceRef.current = 0;
-
-    if (!session) {
-      setConnectionState('idle');
-      return;
-    }
-
-    if (session.status !== 'running') {
-      setConnectionState('disconnected');
-      return;
-    }
-
-    let active = true;
-    let reconnecting = false;
-    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-
-    const connect = () => {
-      setConnectionState(reconnecting ? 'reconnecting' : 'connecting');
-      const socket = openSessionSocket();
-      socketRef.current = socket;
-      const isActiveSocket = () => active && socketRef.current === socket;
-
-      socket.addEventListener('open', () => {
-        if (!isActiveSocket()) return;
-        setConnectionState('connected');
-        const afterSequence = latestSequenceRef.current;
-        sendWs(socket, afterSequence > 0 ? { type: 'subscribe', sessionId: session.id, afterSequence } : { type: 'subscribe', sessionId: session.id });
-      });
-
-      socket.addEventListener('message', (event) => {
-        if (!isActiveSocket()) return;
-        const message = parseServerMessage(event.data);
-        if (!message) return;
-        if ('sessionId' in message && message.sessionId && message.sessionId !== session.id) return;
-
-        if (message.type === 'error') {
-          setVisibleError(message.message);
-          return;
-        }
-
-        if (isSessionStreamEvent(message)) {
-          latestSequenceRef.current = Math.max(latestSequenceRef.current, streamEventSequence(message));
-          setStreamState((current) => applySessionStreamEvent(current, message));
-          applyStreamSideEffects(message, setActivity, setLifecycle, setInteraction, onStatusChange);
-          setVisibleError('');
-        }
-      });
-
-      socket.addEventListener('error', () => {
-        if (!isActiveSocket()) return;
-        setVisibleError('实时连接异常。');
-      });
-
-      socket.addEventListener('close', () => {
-        if (!isActiveSocket()) return;
-        setConnectionState('disconnected');
-        setVisibleError('实时会话已断开。');
-        reconnecting = true;
-        connect();
-      });
-    };
-
-    connect();
-
-    return () => {
-      active = false;
-      if (reconnectTimer) clearTimeout(reconnectTimer);
-      socketRef.current?.close();
-      socketRef.current = null;
-    };
-  }, [session?.id]);
-
-  function handleSubmit(event: { preventDefault(): void }) {
-    event.preventDefault();
-    if (!session || !input.trim() || !socketRef.current) return;
-
-    try {
-      sendWs(socketRef.current, { type: 'input', sessionId: session.id, text: input });
-      setInput('');
-      setInteraction(null);
-      setActivity('working');
-    } catch (error) {
-      setVisibleError(error instanceof Error ? error.message : '发送消息失败。');
-    }
-  }
-
-  function handleAction(actionId: string) {
-    if (!session || !socketRef.current) return;
-
-    try {
-      sendWs(socketRef.current, { type: 'action', sessionId: session.id, actionId, input: '' });
-      setInteraction(null);
-      setActivity('working');
-    } catch (error) {
-      setVisibleError(error instanceof Error ? error.message : '发送操作失败。');
-    }
-  }
+export default function ChatView({ session, transcript, transcriptLoadingOlder = false, onLoadOlderTranscript = () => undefined, onBackToSessions, onStop, persistentTerminals = [] }: ChatViewProps) {
+  const runningTerminals = persistentTerminals.filter((terminalSession) => terminalSession.status === 'running');
 
   if (!session) {
     return (
-      <section className="panel chat-panel idle-panel">
-        <p className="eyebrow">实时控制</p>
-        <h2>未打开会话</h2>
-        <p className="muted">新建或打开会话后，可以在这里连接 Claude Code。</p>
-      </section>
+      <>
+        {runningTerminals.length > 0 ? <TerminalStack sessions={runningTerminals} activeSessionId={null} onBack={onBackToSessions} /> : null}
+        <section className="panel chat-panel idle-panel">
+          <div className="mobile-panel-nav">
+            <button className="secondary-button compact" type="button" onClick={onBackToSessions}>
+              ← 会话
+            </button>
+          </div>
+          <p className="eyebrow">Claude Code 终端</p>
+          <h2>未打开会话</h2>
+          <p className="muted">新建、打开或恢复会话后，会在这里显示 tmux 终端。</p>
+        </section>
+      </>
     );
   }
 
+  const title = transcript?.title ?? session.title;
+  const claudeSession = isClaudeSession(session) ? session : null;
+
+  if (claudeSession?.status === 'running') {
+    return <TerminalStack sessions={mergePersistentTerminals(persistentTerminals, claudeSession)} activeSessionId={claudeSession.id} activeTitle={title} onBack={onBackToSessions} />;
+  }
+
   return (
-    <section className="panel chat-panel" data-native-shell="chat" data-reduced-motion={prefersReducedMotion()}>
-      <div className="mobile-panel-nav">
-        <button className="secondary-button compact" type="button" onClick={onBackToSessions}>
-          ← 会话
-        </button>
-      </div>
+    <>
+      {runningTerminals.length > 0 ? <TerminalStack sessions={runningTerminals} activeSessionId={null} onBack={onBackToSessions} /> : null}
 
-      <header className="chat-header">
-        <div>
-          <p className="eyebrow">{session.status === 'running' ? '实时控制会话' : '历史会话'}</p>
-          <h2>{transcript?.title ?? streamState.session?.title ?? session.title}</h2>
+      <section className="panel chat-panel" data-native-shell="chat">
+        <div className="mobile-panel-nav">
+          <button className="secondary-button compact" type="button" onClick={onBackToSessions}>
+            ← 会话
+          </button>
         </div>
-        <div className="chat-status-actions">
-          <span className={`activity-chip ${lifecycle === 'failed' ? 'failed' : activity}`} data-status-transition={prefersReducedMotion() ? 'reduced' : 'animated'}>{activityLabel(activity, lifecycle)}</span>
-          <span className={`source-chip ${sourceClass(streamState.session?.transcriptSource)}`}>{sourceLabel(streamState.session?.transcriptSource)}</span>
-          <span className={`connection-chip ${connectionState}`}>{connectionState}</span>
-          {isClaudeSession(session) ? (
-            <button className="secondary-button compact danger-button" type="button" onClick={() => onStop(session)} disabled={session.status !== 'running'}>
-              {session.source === 'external-tmux' ? '断开' : '停止'}
-            </button>
+
+        <header className="chat-header">
+          <div>
+            <p className="eyebrow">{claudeSession ? 'Claude Code 终端' : '历史记录'}</p>
+            <h2>{title}</h2>
+          </div>
+          {claudeSession ? (
+            <div className="chat-status-actions">
+              <span className={`activity-chip ${claudeSession.status === 'failed' ? 'failed' : 'stopped'}`}>{statusLabel(claudeSession.status)}</span>
+              <button className="secondary-button compact danger-button" type="button" onClick={() => onStop(claudeSession)} disabled>
+                {claudeSession.source === 'external-tmux' ? '断开' : '停止'}
+              </button>
+            </div>
           ) : null}
-        </div>
-      </header>
+        </header>
 
-      {visibleError ? <div className="error-banner">{visibleError}</div> : null}
-
-      {transcript ? (
-        <TranscriptView transcript={transcript} loadingOlder={transcriptLoadingOlder} onLoadOlder={onLoadOlderTranscript} />
-      ) : streamState.render ? (
-        <SessionRenderSurface render={streamState.render} disabled={connectionState !== 'connected'} onAction={handleAction} />
-      ) : (
-        <>
-          <MessageStream blocks={streamState.blocks} />
-          {activity === 'working' ? <div className="live-activity" role="status">Claude 正在处理…</div> : null}
-          <PromptActions interaction={interaction} disabled={connectionState !== 'connected'} onAction={handleAction} />
-        </>
-      )}
-
-      <SessionStatusline statusline={streamState.statusline} />
-
-      <ChatComposer
-        value={input}
-        disabled={connectionState !== 'connected'}
-        commandEntries={commandEntries}
-        resumeCandidates={resumeCandidates}
-        onChange={setInput}
-        onSubmit={() => handleSubmit({ preventDefault: () => undefined })}
-        onOpenHistorySession={onOpenHistorySession}
-      />
-    </section>
+        {transcript ? (
+          <TranscriptView transcript={transcript} loadingOlder={transcriptLoadingOlder} onLoadOlder={onLoadOlderTranscript} />
+        ) : (
+          <div className="empty-state terminal-empty-state">
+            <h3>{claudeSession ? '会话未运行' : '历史记录加载中'}</h3>
+            <p>{claudeSession ? '这个会话已经停止。请从会话列表新建或恢复一个终端会话。' : '正在加载历史 transcript。'}</p>
+          </div>
+        )}
+      </section>
+    </>
   );
+}
+
+type TerminalStackProps = {
+  sessions: ClaudeSession[];
+  activeSessionId: string | null;
+  activeTitle?: string;
+  onBack(): void;
+};
+
+function TerminalStack({ sessions, activeSessionId, activeTitle, onBack }: TerminalStackProps) {
+  return (
+    <div className="terminal-stack">
+      {sessions.map((terminalSession) => {
+        const active = terminalSession.id === activeSessionId;
+        return (
+          <div className="terminal-stack-item" data-active={active ? 'true' : 'false'} key={terminalSession.id}>
+            <TerminalView sessionId={terminalSession.id} title={active ? activeTitle ?? terminalSession.title : terminalSession.title} onBack={onBack} />
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function mergePersistentTerminals(sessions: ClaudeSession[], activeSession: ClaudeSession): ClaudeSession[] {
+  return [activeSession, ...sessions.filter((session) => session.id !== activeSession.id && session.status === 'running')];
 }
 
 function isClaudeSession(session: DisplaySession): session is ClaudeSession {
   return typeof session.projectId === 'string' && typeof session.source === 'string' && typeof session.createdAt === 'string' && typeof session.lastActiveAt === 'string';
 }
 
-function activityLabel(activity: SessionActivity, lifecycle: SessionViewState['lifecycle'] | null): string {
-  if (lifecycle === 'failed') return '失败';
-  if (lifecycle === 'degraded-fallback') return '降级模式';
-  if (lifecycle === 'disconnected') return '已断开';
-  if (activity === 'working') return '工作中';
-  if (activity === 'idle') return '等待输入';
+function statusLabel(status: ClaudeSession['status']): string {
+  if (status === 'failed') return '失败';
+  if (status === 'running') return '运行中';
   return '已停止';
-}
-
-function sourceLabel(source: SessionViewState['transcriptSource'] | undefined): string {
-  if (source === 'tmux-capture') return 'tmux capture';
-  return source === 'pty-fallback' ? 'PTY fallback' : 'structured';
-}
-
-function sourceClass(source: SessionViewState['transcriptSource'] | undefined): string {
-  return source === 'pty-fallback' ? 'degraded' : source ?? 'structured';
-}
-
-function prefersReducedMotion(): boolean {
-  return window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
-}
-
-function parseServerMessage(raw: unknown): WsServerMessage | null {
-  if (typeof raw !== 'string') return null;
-  try {
-    return JSON.parse(raw) as WsServerMessage;
-  } catch {
-    return null;
-  }
-}
-
-function isSessionStreamEvent(message: WsServerMessage): message is SessionStreamEvent {
-  return message.type === 'snapshot' || message.type === 'block-added' || message.type === 'block-updated' || message.type === 'block-finalized' || message.type === 'activity-changed' || message.type === 'session-changed' || message.type === 'render-changed' || message.type === 'statusline-changed';
-}
-
-function streamEventSequence(event: SessionStreamEvent): number {
-  return 'sequence' in event && typeof event.sequence === 'number' ? event.sequence : 0;
-}
-
-function applyStreamSideEffects(
-  event: SessionStreamEvent,
-  setActivity: (activity: SessionActivity) => void,
-  setLifecycle: (lifecycle: SessionViewState['lifecycle']) => void,
-  setInteraction: (interaction: ParsedInteraction | null) => void,
-  onStatusChange: (sessionId: string, status: SessionStatus) => void,
-): void {
-  if (event.type === 'snapshot') {
-    setActivity(event.session.activity);
-    setLifecycle(event.session.lifecycle);
-    setInteraction(latestInteraction(event.blocks));
-    const status = statusFromLifecycle(event.session.lifecycle);
-    if (status) onStatusChange(event.sessionId, status);
-    return;
-  }
-
-  if (event.type === 'activity-changed') {
-    setActivity(event.activity);
-    return;
-  }
-
-  if (event.type === 'block-added' && event.block.kind === 'interaction') {
-    setInteraction(event.block.interaction ?? null);
-    return;
-  }
-
-  if (event.type === 'block-updated' && event.patch.interaction) {
-    setInteraction(event.patch.interaction.kind === 'none' ? null : event.patch.interaction);
-    return;
-  }
-
-  if (event.type === 'session-changed') {
-    if (event.patch.activity) setActivity(event.patch.activity);
-    if (event.patch.lifecycle) setLifecycle(event.patch.lifecycle);
-    const status = event.patch.lifecycle ? statusFromLifecycle(event.patch.lifecycle) : null;
-    if (status) onStatusChange(event.sessionId, status);
-  }
-}
-
-function latestInteraction(blocks: ConversationBlock[]): ParsedInteraction | null {
-  const block = [...blocks].reverse().find((candidate) => candidate.kind === 'interaction' && candidate.interaction && candidate.interaction.kind !== 'none');
-  return block?.interaction ?? null;
-}
-
-function statusFromLifecycle(lifecycle: SessionViewState['lifecycle']): SessionStatus | null {
-  if (lifecycle === 'running' || lifecycle === 'stopped' || lifecycle === 'failed') return lifecycle;
-  if (lifecycle === 'disconnected') return 'stopped';
-  return null;
 }

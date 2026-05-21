@@ -42,7 +42,7 @@ describe('SessionList', () => {
     expect(onStop).toHaveBeenCalledWith(runningSession);
   });
 
-  it('labels external tmux sessions with a detach action', () => {
+  it('hides external tmux source labels while keeping a detach action', () => {
     const onStop = vi.fn();
     const tmuxSession = session({ source: 'external-tmux', title: 'tmux Claude', externalPaneId: '%12' });
 
@@ -63,7 +63,7 @@ describe('SessionList', () => {
       />,
     );
 
-    expect(screen.getByText(/external tmux · %12/i)).toBeInTheDocument();
+    expect(screen.queryByText(/external tmux/i)).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: /断开 tmux Claude/i }));
 
@@ -99,16 +99,46 @@ describe('SessionList', () => {
     expect(screen.getByText('History 25')).toBeInTheDocument();
   });
 
-  it('opens the existing app session for matched history entries', () => {
-    const onOpen = vi.fn();
+  it('views history from the card body and resumes from the open button', () => {
+    const onOpenHistory = vi.fn();
     const onResume = vi.fn();
-    const appSession = session({ id: 'app-session-1', claudeSessionId: 'session-1' });
+    const item = historySession(1);
 
     render(
       <SessionList
         project={project}
         sessions={[]}
-        history={[historySession(1, { appSessionId: appSession.id, appSession })]}
+        history={[item]}
+        loading={false}
+        selectedSessionId={null}
+        onNew={vi.fn()}
+        onContinue={vi.fn()}
+        onResume={onResume}
+        onOpen={vi.fn()}
+        onOpenHistory={onOpenHistory}
+        onStop={vi.fn()}
+        onBackToProjects={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /History 1 Last message 1/i }));
+    expect(onOpenHistory).toHaveBeenCalledWith(item);
+    expect(onResume).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: '打开' }));
+    expect(onResume).toHaveBeenCalledWith(item);
+  });
+
+  it('resumes history from the history open button even when an app session exists', () => {
+    const onOpen = vi.fn();
+    const onResume = vi.fn();
+    const item = historySession(1, { appSessionId: 'app-session-1', appSession: session({ id: 'app-session-1', claudeSessionId: 'session-1' }) });
+
+    render(
+      <SessionList
+        project={project}
+        sessions={[]}
+        history={[item]}
         loading={false}
         selectedSessionId={null}
         onNew={vi.fn()}
@@ -121,10 +151,10 @@ describe('SessionList', () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole('button', { name: /打开实时会话/i }));
+    fireEvent.click(screen.getByRole('button', { name: '打开' }));
 
-    expect(onOpen).toHaveBeenCalledWith(appSession);
-    expect(onResume).not.toHaveBeenCalled();
+    expect(onResume).toHaveBeenCalledWith(item);
+    expect(onOpen).not.toHaveBeenCalled();
   });
 });
 

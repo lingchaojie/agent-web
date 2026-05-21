@@ -18,6 +18,8 @@
     "@fastify/static": "latest",
     "@fastify/websocket": "latest",
     "@vitejs/plugin-react": "latest",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
     "better-sqlite3": "latest",
     "fastify": "latest",
     "node-pty": "latest",

@@ -171,6 +171,17 @@ export type WsClientMessage =
   | { type: 'input'; sessionId: string; text: string }
   | { type: 'action'; sessionId: string; actionId: string; input: string };
 
+export type TerminalConnectionStatus = 'connecting' | 'attached' | 'detached' | 'stopped' | 'unavailable' | 'rejected' | 'error';
+export type TerminalClientMessage =
+  | { type: 'attach'; sessionId: string; cols?: number; rows?: number }
+  | { type: 'input'; sessionId: string; data: string }
+  | { type: 'resize'; sessionId: string; cols: number; rows: number }
+  | { type: 'detach'; sessionId: string };
+export type TerminalServerMessage =
+  | { type: 'status'; sessionId?: string; status: TerminalConnectionStatus; message?: string }
+  | { type: 'output'; sessionId: string; data: string }
+  | { type: 'error'; sessionId?: string; message: string };
+
 export type SlashCommandScope = 'app' | 'project' | 'user';
 export type SlashCommandBehavior = 'app-owned' | 'prompt-insert' | 'unsupported';
 export type SlashCommandSupport = 'supported' | 'unsupported';

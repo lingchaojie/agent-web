@@ -22,12 +22,17 @@ export function parseTmuxPaneList(output: string): TmuxPane[] {
 
 export function exposedTmuxPanes(panes: TmuxPane[]): TmuxPane[] {
   return panes.filter((pane) => {
+    if (isAppOwnedTmuxSession(pane)) return false;
     if (pane.exposedFlag === '1') return true;
     return [pane.sessionName, pane.windowName, pane.paneTitle]
       .join(' ')
       .toLowerCase()
       .includes('webagent');
   });
+}
+
+function isAppOwnedTmuxSession(pane: TmuxPane): boolean {
+  return pane.sessionName.startsWith('webagent-');
 }
 
 export function tmuxExternalKey(pane: TmuxPane): string {

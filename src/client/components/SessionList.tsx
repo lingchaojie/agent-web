@@ -84,7 +84,7 @@ export default function SessionList({
               <button className="session-open-button" type="button" onClick={() => onOpen(session)}>
                 <span className="list-card-main">
                   <span className="row-title">{session.title}</span>
-                  <span className="row-subtitle">{formatDate(session.lastActiveAt)} · {sourceLabel(session)}</span>
+                  <span className="row-subtitle">{formatDate(session.lastActiveAt)}</span>
                 </span>
                 <span className={`status-chip ${session.status}`}>{session.status}</span>
               </button>
@@ -102,17 +102,14 @@ export default function SessionList({
         <div className="stack-list">
           {visibleHistory.map((item) => (
             <article className="history-card" key={`${item.projectKey}:${item.sessionId}`}>
-              <div>
+              <button className="history-open-button" type="button" onClick={() => onOpenHistory(item)} disabled={loading}>
                 <h4>{item.title}</h4>
                 <p>{item.lastMessage || '暂无预览。'}</p>
                 <span>{formatDate(item.updatedAt)}</span>
-              </div>
+              </button>
               <div className="history-actions">
-                <button className="secondary-button compact" type="button" onClick={() => onOpenHistory(item)} disabled={loading}>
+                <button className="primary-button compact" type="button" onClick={() => onResume(item)} disabled={loading}>
                   打开
-                </button>
-                <button className="secondary-button compact" type="button" onClick={() => item.appSession ? onOpen(item.appSession) : onResume(item)} disabled={loading}>
-                  {item.appSession ? '打开实时会话' : '恢复'}
                 </button>
               </div>
             </article>
@@ -131,11 +128,6 @@ export default function SessionList({
       </div>
     </section>
   );
-}
-
-function sourceLabel(session: ClaudeSession): string {
-  if (session.source === 'external-tmux') return session.externalPaneId ? `external tmux · ${session.externalPaneId}` : 'external tmux';
-  return session.source;
 }
 
 function stopActionLabel(session: ClaudeSession): string {

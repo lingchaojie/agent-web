@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { ClaudeSession, HistorySession, Project, SessionStatus, SlashCommandEntry, TranscriptWindow } from '../shared/types';
+import type { ClaudeSession, HistorySession, Project, TranscriptWindow } from '../shared/types';
 import {
   checkAuth,
   continueSession,
@@ -7,9 +7,7 @@ import {
   listHistory,
   listProjects,
   listSessions,
-  listSlashCommands,
   loadHistoryTranscript,
-  loadSessionTranscript,
   resumeSession,
   stopSession,
 } from './api';
@@ -33,11 +31,11 @@ export default function App() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [history, setHistory] = useState<HistorySession[]>([]);
   const [sessions, setSessions] = useState<ClaudeSession[]>([]);
-  const [slashCommands, setSlashCommands] = useState<SlashCommandEntry[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(() => localStorage.getItem('webagent.selectedProjectId'));
   const [selectedChat, setSelectedChat] = useState<SelectedChat | null>(null);
   const [transcript, setTranscript] = useState<TranscriptWindow | null>(null);
   const [transcriptLoadingOlder, setTranscriptLoadingOlder] = useState(false);
+  const [persistentTerminalSessions, setPersistentTerminalSessions] = useState<ClaudeSession[]>([]);
   const [mobilePane, setMobilePane] = useState<MobilePane>(() => (localStorage.getItem('webagent.selectedSessionId') ? 'chat' : 'projects'));
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -71,13 +69,11 @@ export default function App() {
       setSelectedChat(null);
       setTranscript(null);
       setSessions([]);
-      setSlashCommands([]);
       localStorage.removeItem('webagent.selectedProjectId');
       return;
     }
     localStorage.setItem('webagent.selectedProjectId', selectedProjectId);
     refreshSessions(selectedProjectId);
-    refreshSlashCommands(selectedProjectId);
   }, [selectedProjectId]);
 
   async function refreshProjectsAndHistory() {
@@ -93,21 +89,11 @@ export default function App() {
       setSelectedProjectId(nextSelectedProjectId);
       if (nextSelectedProjectId && nextSelectedProjectId === selectedProjectId) {
         void refreshSessions(nextSelectedProjectId);
-        void refreshSlashCommands(nextSelectedProjectId);
       }
     } catch (err) {
       setError(errorMessage(err));
     } finally {
       setLoading(false);
-    }
-  }
-
-  async function refreshSlashCommands(projectId: string) {
-    try {
-      const catalog = await listSlashCommands(projectId);
-      if (selectedProjectId === projectId) setSlashCommands(catalog.commands);
-    } catch {
-      setSlashCommands([]);
     }
   }
 
@@ -136,7 +122,6 @@ export default function App() {
       setSelectedChat(null);
       setTranscript(null);
       setSessions([]);
-      setSlashCommands([]);
       setSelectedProjectId(project.id);
       localStorage.removeItem('webagent.selectedSessionId');
     }
@@ -193,25 +178,12 @@ export default function App() {
     void selectHistorySession(historySession);
   }
 
-  function handleHistoryCommandOpen(historySession: HistorySession) {
-    if (historySession.appSession) {
-      void selectSession(historySession.appSession);
-      return;
-    }
-    void handleResume(historySession);
-  }
-
   async function selectSession(session: ClaudeSession) {
+    setPersistentTerminalSessions((current) => session.status === 'running' ? [session, ...current.filter((item) => item.id !== session.id)] : current.filter((item) => item.id !== session.id));
     setSelectedChat({ kind: 'session', session });
     setTranscript(null);
     setMobilePane('chat');
     localStorage.setItem('webagent.selectedSessionId', session.id);
-    if (!session.claudeSessionId) return;
-    try {
-      setTranscript(await loadSessionTranscript(session.id, { limit: TRANSCRIPT_PAGE_SIZE }));
-    } catch {
-      setTranscript(null);
-    }
   }
 
   async function selectHistorySession(historySession: HistorySession) {
@@ -249,6 +221,7 @@ export default function App() {
     try {
       await stopSession(session.id);
       setSessions((current) => current.filter((item) => item.id !== session.id));
+      setPersistentTerminalSessions((current) => current.filter((item) => item.id !== session.id));
       setSelectedChat((current) => {
         if (current?.kind !== 'session' || current.session.id !== session.id) return current;
         localStorage.removeItem('webagent.selectedSessionId');
@@ -262,18 +235,12 @@ export default function App() {
     }
   }
 
-  function handleStatusChange(sessionId: string, status: SessionStatus) {
-    setSessions((current) => current.map((session) => (session.id === sessionId ? { ...session, status } : session)));
-    setSelectedChat((current) => (current?.kind === 'session' && current.session.id === sessionId ? { kind: 'session', session: { ...current.session, status } } : current));
-  }
-
   async function loadOlderTranscript() {
     if (!transcript?.hasMoreOlder || transcriptLoadingOlder || !selectedChat) return;
     setTranscriptLoadingOlder(true);
     try {
-      const older = selectedChat.kind === 'history'
-        ? await loadHistoryTranscript(selectedChat.session.historySessionId, { limit: TRANSCRIPT_PAGE_SIZE, before: transcript.olderCursor ?? undefined })
-        : await loadSessionTranscript(selectedChat.session.id, { limit: TRANSCRIPT_PAGE_SIZE, before: transcript.olderCursor ?? undefined });
+      if (selectedChat.kind !== 'history') return;
+      const older = await loadHistoryTranscript(selectedChat.session.historySessionId, { limit: TRANSCRIPT_PAGE_SIZE, before: transcript.olderCursor ?? undefined });
       setTranscript((current) => current ? { ...older, regions: [...older.regions, ...current.regions] } : older);
     } catch (err) {
       setError(errorMessage(err));
@@ -336,13 +303,10 @@ export default function App() {
             session={selectedChat?.kind === 'session' ? selectedChat.session : selectedChat?.session ?? null}
             transcript={transcript}
             transcriptLoadingOlder={transcriptLoadingOlder}
-            commandEntries={slashCommands}
-            resumeCandidates={filteredHistory}
             onLoadOlderTranscript={loadOlderTranscript}
-            onOpenHistorySession={handleHistoryCommandOpen}
-            onStatusChange={handleStatusChange}
             onBackToSessions={() => setMobilePane('sessions')}
             onStop={handleStopSession}
+            persistentTerminals={persistentTerminalSessions}
           />
         </section>
       </div>

@@ -1,4 +1,4 @@
-import type { ClaudeSession, HistorySession, Project, SlashCommandCatalog, TranscriptWindow, WsClientMessage } from '../shared/types';
+import type { ClaudeSession, HistorySession, Project, SlashCommandCatalog, TerminalClientMessage, TranscriptWindow, WsClientMessage } from '../shared/types';
 
 const TOKEN_KEY = 'webagent.token';
 
@@ -89,20 +89,19 @@ export function stopSession(sessionId: string): Promise<ClaudeSession> {
 }
 
 export function openSessionSocket(): WebSocket {
-  const token = getToken();
-  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const url = `${protocol}//${window.location.host}/api/ws`;
+  return openWebSocket('/api/ws');
+}
 
-  if (!token) return new WebSocket(url, ['webagent']);
-
-  return new WebSocket(url, ['webagent', `token.${base64url(token)}`]);
+export function openTerminalSocket(): WebSocket {
+  return openWebSocket('/api/terminal/ws');
 }
 
 export function sendWs(socket: WebSocket, message: WsClientMessage): void {
-  if (socket.readyState !== WebSocket.OPEN) {
-    throw new Error('WebSocket is not connected');
-  }
-  socket.send(JSON.stringify(message));
+  sendJsonWs(socket, message);
+}
+
+export function sendTerminalWs(socket: WebSocket, message: TerminalClientMessage): void {
+  sendJsonWs(socket, message);
 }
 
 async function readJsonResponse<T>(response: Response): Promise<T> {
@@ -126,6 +125,23 @@ function queryString(input: { limit?: number; before?: string }): string {
   if (input.before) params.set('before', input.before);
   const query = params.toString();
   return query ? `?${query}` : '';
+}
+
+function openWebSocket(path: string): WebSocket {
+  const token = getToken();
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const url = `${protocol}//${window.location.host}${path}`;
+
+  if (!token) return new WebSocket(url, ['webagent']);
+
+  return new WebSocket(url, ['webagent', `token.${base64url(token)}`]);
+}
+
+function sendJsonWs(socket: WebSocket, message: WsClientMessage | TerminalClientMessage): void {
+  if (socket.readyState !== WebSocket.OPEN) {
+    throw new Error('WebSocket is not connected');
+  }
+  socket.send(JSON.stringify(message));
 }
 
 function base64url(value: string): string {

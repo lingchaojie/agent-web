@@ -86,7 +86,10 @@ export function getAvailableHistory(context: RouteContext): HistorySession[] {
     .filter((session) => session.projectPath !== null && isAvailableProjectPath(session.projectPath))
     .map((session) => {
       const appSession = context.sessions.findByClaudeSessionId(session.sessionId) ?? undefined;
-      return appSession ? { ...session, appSessionId: appSession.id, appSession } : session;
+      if (appSession?.status === 'running' && appSession.projectId === historyProjectId(session.projectPath!)) {
+        return { ...session, appSessionId: appSession.id, appSession };
+      }
+      return session;
     });
 }
 

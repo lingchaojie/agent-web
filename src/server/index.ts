@@ -6,7 +6,7 @@ import { loadConfig } from './config';
 import { createApp } from './app';
 import { ProjectRegistry } from './services/projectRegistry';
 import { SessionRegistry } from './services/sessionRegistry';
-import { StreamJsonClaudeEventSource } from './services/claudeEventSource';
+import { TmuxClaudeRunner } from './services/tmuxClaudeRunner';
 import { RealtimeHub } from './services/realtimeHub';
 import { StatuslineService } from './services/statuslineService';
 import { ClaudeResumeIndex } from './services/claudeResumeIndex';
@@ -15,6 +15,7 @@ import { historyProjectId, isAvailableProjectPath } from './services/projectDisc
 import { TmuxPaneAdapter } from './services/tmuxPaneAdapter';
 import { exposedTmuxPanes, parseTmuxPaneList, tmuxListPanesArgs, type TmuxPane } from './services/tmuxPaneDiscovery';
 import { TmuxSessionSync } from './services/tmuxSessionSync';
+import { TerminalAttachService } from './services/terminalAttachService';
 
 const execFileAsync = promisify(execFile);
 
@@ -23,7 +24,7 @@ const db = createDatabase(config.databasePath);
 const projects = new ProjectRegistry(db);
 const sessions = new SessionRegistry(db);
 sessions.stopRunningSessions();
-const runner = new StreamJsonClaudeEventSource({ claudeBin: config.claudeBin });
+const runner = new TmuxClaudeRunner({ claudeBin: config.claudeBin });
 const statuslines = new StatuslineService();
 const hub = new RealtimeHub(sessions, runner, { projects, statuslines });
 const resumeIndex = new ClaudeResumeIndex(config.claudeConfigDir);
@@ -42,9 +43,22 @@ const tmuxSync = new TmuxSessionSync({
   },
   titleForPane,
 });
+const terminals = new TerminalAttachService({
+  targetForSession: (sessionId) => {
+    const session = sessions.getSession(sessionId);
+    if (session?.source === 'external-tmux' && session.externalKey) {
+      const [, socketPath, sessionName] = session.externalKey.split(':');
+      return {
+        args: ['-S', socketPath, 'attach-session', '-t', sessionName],
+        cwd: session.externalCwd ?? undefined,
+      };
+    }
+    return runner.tmuxTarget(sessionId);
+  },
+});
 tmuxSync.start();
 
-const app = await createApp({ config, projects, sessions, runner, hub, resumeIndex, transcripts, tmuxSync });
+const app = await createApp({ config, projects, sessions, runner, hub, resumeIndex, transcripts, terminals, tmuxSync });
 await app.listen({ host: config.host, port: config.port });
 
 async function listExposedTmuxPanes(): Promise<TmuxPane[]> {

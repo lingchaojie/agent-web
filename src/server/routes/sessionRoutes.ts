@@ -105,7 +105,7 @@ export function registerSessionRoutes(app: FastifyInstance, context: RouteContex
     if (!historySession) return reply.code(404).send({ error: 'History session not found for project' });
 
     const existingSession = context.sessions.findByClaudeSessionId(parsed.data.claudeSessionId);
-    if (existingSession && existingSession.projectId === project.id) return existingSession;
+    if (existingSession?.projectId === project.id && existingSession.status === 'running') return existingSession;
 
     const session = context.sessions.createSession({
       projectId: project.id,

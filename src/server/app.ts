@@ -11,9 +11,11 @@ import type { SessionRegistry } from './services/sessionRegistry';
 import type { ClaudeEventSource } from './services/claudeEventSource';
 import type { RealtimeHub } from './services/realtimeHub';
 import type { ClaudeResumeIndex } from './services/claudeResumeIndex';
+import type { TerminalAttachService } from './services/terminalAttachService';
 import { registerAuthRoutes } from './routes/authRoutes';
 import { registerProjectRoutes } from './routes/projectRoutes';
 import { registerSessionRoutes } from './routes/sessionRoutes';
+import { registerTerminalRoutes } from './routes/terminalRoutes';
 import { registerHistoryRoutes } from './routes/historyRoutes';
 import { registerSlashCommandRoutes } from './routes/slashCommandRoutes';
 
@@ -27,6 +29,7 @@ export type RouteContext = {
   transcripts: {
     normalizeEntrypoint(input: { projectPath: string; sessionId: string }): void;
   };
+  terminals: Pick<TerminalAttachService, 'attach'>;
   tmuxSync?: { refresh(): Promise<void>; sendInput(sessionId: string, text: string): Promise<void> };
 };
 
@@ -54,7 +57,7 @@ export async function createApp(context: RouteContext) {
     if (pathname === '/api/auth/check') return;
     if (!isApiPath(pathname)) return;
 
-    const authorized = pathname === '/api/ws'
+    const authorized = pathname === '/api/ws' || pathname === '/api/terminal/ws'
       ? isAuthorized(request.headers.authorization, context.config.appToken) || isWebSocketProtocolAuthorized(request.headers['sec-websocket-protocol'], context.config.appToken)
       : isAuthorized(request.headers.authorization, context.config.appToken);
 
@@ -66,6 +69,7 @@ export async function createApp(context: RouteContext) {
   registerAuthRoutes(app, context);
   registerProjectRoutes(app, context);
   registerSessionRoutes(app, context);
+  registerTerminalRoutes(app, context);
   registerHistoryRoutes(app, context);
   registerSlashCommandRoutes(app, context);
 
