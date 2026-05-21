@@ -68,6 +68,32 @@ describe('projectDiscovery', () => {
 
     expect(projects).toEqual([whitelistProject]);
   });
+
+  it('does not discover history projects that contain a project-local .claude directory', () => {
+    mkdirSync(join(projectPath, '.claude'));
+
+    const projects = mergeDiscoveredProjects([], [historySession({ projectPath, title: 'Local project history' })]);
+
+    expect(projects).toEqual([]);
+  });
+
+  it('still keeps whitelisted projects that contain a project-local .claude directory', () => {
+    mkdirSync(join(projectPath, '.claude'));
+    const whitelistProject: Project = {
+      id: 'project-1',
+      name: 'Pinned Demo',
+      path: projectPath,
+      favorite: true,
+      available: true,
+      source: 'whitelist',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    };
+
+    const projects = mergeDiscoveredProjects([whitelistProject], [historySession({ projectPath })]);
+
+    expect(projects).toEqual([whitelistProject]);
+  });
 });
 
 function historySession(overrides: Partial<HistorySession> = {}): HistorySession {

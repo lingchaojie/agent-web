@@ -528,7 +528,7 @@ textarea:focus {
 .terminal-view {
   min-width: 0;
   display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr) max-content;
+  grid-template-rows: auto auto minmax(0, 1fr) auto max-content;
   gap: 0.75rem;
   height: calc(100vh - 6rem);
   min-height: 32rem;
@@ -576,7 +576,10 @@ textarea:focus {
   min-width: 0;
   width: 100%;
   min-height: 0;
-  overflow: hidden;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior: contain;
+  touch-action: none;
   border: 1px solid #2a211a;
   border-radius: 1rem;
   padding: 0.6rem;
@@ -601,6 +604,10 @@ textarea:focus {
 .terminal-xterm-host .xterm-screen,
 .terminal-xterm-host .xterm-viewport {
   max-height: 100%;
+}
+
+.terminal-xterm-host .xterm-viewport {
+  overflow-y: hidden !important;
 }
 
 .terminal-shortcut-bar {
@@ -641,6 +648,95 @@ textarea:focus {
   border-color: var(--accent);
   background: var(--accent-soft);
   box-shadow: 0 0 0 rgba(200, 189, 173, 0);
+}
+
+.terminal-voice-panel {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr);
+  align-items: center;
+  gap: 0.45rem;
+  min-width: 0;
+  border: 1px solid rgba(217, 119, 87, 0.22);
+  border-radius: 0.85rem;
+  padding: 0.45rem;
+  background: rgba(255, 253, 248, 0.88);
+}
+
+.terminal-voice-panel[data-fallback-open='true'] {
+  grid-template-columns: minmax(0, 1fr);
+  align-items: stretch;
+}
+
+.terminal-voice-button {
+  min-height: 2.6rem;
+  border: 1px solid var(--border-strong);
+  border-radius: 0.78rem;
+  padding: 0.42rem 0.75rem;
+  color: var(--text);
+  background: var(--accent-soft);
+  font-weight: 900;
+  touch-action: none;
+}
+
+.terminal-voice-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
+.terminal-voice-panel[data-voice-state='listening'] .terminal-voice-button {
+  border-color: rgba(50, 115, 95, 0.32);
+  color: var(--success);
+  background: var(--success-bg);
+}
+
+.terminal-voice-panel[data-voice-state='error'] .terminal-voice-button,
+.terminal-voice-panel[data-voice-state='unavailable'] .terminal-voice-button {
+  border-color: rgba(166, 64, 60, 0.24);
+  color: var(--danger);
+  background: var(--danger-bg);
+}
+
+.terminal-voice-cancel {
+  grid-column: 2;
+  min-height: 2.6rem;
+}
+
+.terminal-voice-status {
+  grid-column: 3;
+  margin: 0;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 800;
+  line-height: 1.35;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.terminal-voice-panel[data-fallback-open='true'] .terminal-voice-status {
+  grid-column: 1;
+  white-space: normal;
+}
+
+.terminal-voice-fallback-panel {
+  display: grid;
+  grid-column: 1 / -1;
+  gap: 0.45rem;
+}
+
+.terminal-voice-fallback-input {
+  min-height: 4.5rem;
+  padding: 0.72rem 0.78rem;
+  border-radius: 0.78rem;
+  background: rgba(255, 253, 248, 0.96);
+  resize: vertical;
+}
+
+.terminal-voice-fallback-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
 }
 
 .chat-status-actions {
@@ -1226,6 +1322,8 @@ textarea:focus {
     min-height: 0;
     overflow-x: auto;
     overflow-y: hidden;
+    overscroll-behavior: contain;
+    touch-action: none;
     border-radius: 0.82rem;
     padding: 0.42rem;
     -webkit-overflow-scrolling: touch;
@@ -1238,6 +1336,20 @@ textarea:focus {
   .terminal-shortcut-bar {
     margin: 0 -0.15rem;
     padding: 0.12rem 0.15rem 0.24rem;
+  }
+
+  .terminal-voice-panel {
+    grid-template-columns: auto auto minmax(0, 1fr);
+    padding: 0.38rem;
+  }
+
+  .terminal-voice-fallback-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .terminal-voice-status {
+    font-size: 0.74rem;
   }
 }
 

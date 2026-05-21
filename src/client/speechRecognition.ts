@@ -22,7 +22,7 @@ type SpeechRecognitionOptions = {
   win?: SpeechRecognitionWindow;
 };
 
-type SpeechRecognitionWindow = Window & typeof globalThis & {
+export type SpeechRecognitionWindow = Window & typeof globalThis & {
   SpeechRecognition?: BrowserSpeechRecognitionConstructor;
   webkitSpeechRecognition?: BrowserSpeechRecognitionConstructor;
 };
@@ -70,6 +70,13 @@ type BrowserSpeechRecognitionAlternative = {
 
 export function isSpeechRecognitionSupported(win: SpeechRecognitionWindow = window as SpeechRecognitionWindow): boolean {
   return Boolean(getSpeechRecognitionConstructor(win));
+}
+
+export function speechRecognitionUnavailableMessage(win: SpeechRecognitionWindow = window as SpeechRecognitionWindow): string {
+  if (!isSpeechRecognitionSupported(win) && win.isSecureContext === false) {
+    return '语音输入需要 HTTPS。也可以点“系统语音输入”，用手机键盘麦克风输入后插入终端。';
+  }
+  return '此浏览器暂不支持语音输入。';
 }
 
 export function createSpeechRecognitionSession(callbacks: SpeechRecognitionCallbacks, options: SpeechRecognitionOptions = {}): SpeechRecognitionSession | null {

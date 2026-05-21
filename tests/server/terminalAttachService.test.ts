@@ -6,12 +6,14 @@ describe('TerminalAttachService', () => {
   it('spawns tmux attach in a PTY and forwards output', () => {
     const pty = fakePty();
     const spawn = vi.fn(() => pty);
-    const service = new TerminalAttachService({ spawn, targetForSession: () => 'webagent-session-1' });
+    const execFileSync = vi.fn();
+    const service = new TerminalAttachService({ spawn, execFileSync, targetForSession: () => 'webagent-session-1' });
     const sent: TerminalServerMessage[] = [];
 
     const attach = service.attach({ sessionId: 'session-1', cols: 90, rows: 28 }, (message) => sent.push(message));
     pty.fireData('hello terminal');
 
+    expect(execFileSync).toHaveBeenCalledWith('tmux', ['set-option', '-t', 'webagent-session-1', 'mouse', 'on'], { stdio: 'pipe' });
     expect(spawn).toHaveBeenCalledWith('tmux', ['attach-session', '-t', 'webagent-session-1'], {
       name: 'xterm-256color',
       cols: 90,
@@ -26,16 +28,19 @@ describe('TerminalAttachService', () => {
     ]);
   });
 
-  it('spawns tmux attach with custom target args and cwd', () => {
+  it('spawns tmux attach with custom target args and cwd without changing external tmux options', () => {
     const pty = fakePty();
     const spawn = vi.fn(() => pty);
+    const execFileSync = vi.fn();
     const service = new TerminalAttachService({
       spawn,
+      execFileSync,
       targetForSession: () => ({ args: ['-S', '/tmp/tmux/default', 'attach-session', '-t', 'external'], cwd: '/tmp/project' }),
     });
 
     service.attach({ sessionId: 'external-session', cols: 80, rows: 24 }, vi.fn());
 
+    expect(execFileSync).not.toHaveBeenCalled();
     expect(spawn).toHaveBeenCalledWith('tmux', ['-S', '/tmp/tmux/default', 'attach-session', '-t', 'external'], {
       name: 'xterm-256color',
       cols: 80,

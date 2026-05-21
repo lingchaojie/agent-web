@@ -1,7 +1,9 @@
+import { execFileSync as defaultExecFileSync } from 'node:child_process';
 import pty from 'node-pty';
 import type { TerminalServerMessage } from '../../shared/types';
 
 type ExitEvent = { exitCode: number; signal?: number };
+type ExecFileSyncFn = (file: string, args: readonly string[], options: { stdio: 'pipe' }) => unknown;
 
 type PtyProcess = {
   write(data: string): void;
@@ -43,10 +45,12 @@ export type TerminalAttach = {
 
 export class TerminalAttachService {
   private readonly active = new Map<string, ActiveAttach>();
+  private readonly execFileSync: ExecFileSyncFn;
   private readonly spawn: SpawnFn;
   private readonly tmuxBin: string;
 
-  constructor(private readonly options: { targetForSession(sessionId: string): TerminalAttachTarget | null; spawn?: SpawnFn; tmuxBin?: string }) {
+  constructor(private readonly options: { targetForSession(sessionId: string): TerminalAttachTarget | null; spawn?: SpawnFn; tmuxBin?: string; execFileSync?: ExecFileSyncFn }) {
+    this.execFileSync = options.execFileSync ?? defaultExecFileSync;
     this.spawn = options.spawn ?? defaultSpawn;
     this.tmuxBin = options.tmuxBin ?? 'tmux';
   }
@@ -64,6 +68,7 @@ export class TerminalAttachService {
     }
 
     const attachArgs = attachArgsForTarget(target);
+    enableMouseIfWebagentTarget(this.execFileSync, this.tmuxBin, target);
     const proc = this.spawn(this.tmuxBin, attachArgs.args, {
       name: 'xterm-256color',
       cols: input.cols ?? 100,
@@ -107,6 +112,14 @@ export class TerminalAttachService {
 function attachArgsForTarget(target: TerminalAttachTarget): { args: string[]; cwd?: string } {
   if (typeof target === 'string') return { args: ['attach-session', '-t', target] };
   return target;
+}
+
+function enableMouseIfWebagentTarget(execFileSync: ExecFileSyncFn, tmuxBin: string, target: TerminalAttachTarget): void {
+  if (typeof target !== 'string' || !target.startsWith('webagent-')) return;
+  try {
+    execFileSync(tmuxBin, ['set-option', '-t', target, 'mouse', 'on'], { stdio: 'pipe' });
+  } catch {
+  }
 }
 
 const defaultSpawn: SpawnFn = (file, args, options) => pty.spawn(file, args, {

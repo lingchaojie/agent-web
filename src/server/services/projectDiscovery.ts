@@ -1,5 +1,5 @@
 import { existsSync, realpathSync, statSync } from 'node:fs';
-import { basename } from 'node:path';
+import { basename, join } from 'node:path';
 import type { ClaudeSession, HistorySession, Project } from '../../shared/types';
 
 export const HISTORY_PROJECT_ID_PREFIX = 'history:';
@@ -26,7 +26,7 @@ export function mergeDiscoveredProjects(whitelistProjects: Project[], history: H
   }
 
   for (const session of history) {
-    if (!session.projectPath || byPath.has(session.projectPath) || !isAvailableProjectPath(session.projectPath)) continue;
+    if (!session.projectPath || byPath.has(session.projectPath) || !isAvailableHistoryProjectPath(session.projectPath)) continue;
     const now = session.updatedAt;
     byPath.set(session.projectPath, {
       id: historyProjectId(session.projectPath),
@@ -66,6 +66,18 @@ export function mergeDiscoveredProjects(whitelistProjects: Project[], history: H
 export function isAvailableProjectPath(path: string): boolean {
   try {
     return existsSync(path) && statSync(path).isDirectory() && realpathSync(path) === path;
+  } catch {
+    return false;
+  }
+}
+
+export function isAvailableHistoryProjectPath(path: string): boolean {
+  return isAvailableProjectPath(path) && !hasProjectLocalClaudeDirectory(path);
+}
+
+function hasProjectLocalClaudeDirectory(path: string): boolean {
+  try {
+    return statSync(join(path, '.claude')).isDirectory();
   } catch {
     return false;
   }

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { createSpeechRecognitionSession, isSpeechRecognitionSupported } from '../../src/client/speechRecognition';
+import { createSpeechRecognitionSession, isSpeechRecognitionSupported, speechRecognitionUnavailableMessage } from '../../src/client/speechRecognition';
 
 class MockSpeechRecognition {
   static instances: MockSpeechRecognition[] = [];
@@ -34,6 +34,7 @@ type BrowserLikeResultList = { length: number; [index: number]: BrowserLikeResul
 type MockWindow = Window & typeof globalThis & {
   SpeechRecognition?: typeof MockSpeechRecognition;
   webkitSpeechRecognition?: typeof MockSpeechRecognition;
+  isSecureContext?: boolean;
 };
 
 function mockWindow(overrides: Partial<MockWindow> = {}): MockWindow {
@@ -137,5 +138,13 @@ describe('speech recognition adapter', () => {
 
   it('returns null when speech recognition is unsupported', () => {
     expect(createSpeechRecognitionSession({}, { win: mockWindow() })).toBeNull();
+  });
+
+  it('explains that HTTP access can use the system keyboard microphone fallback when speech recognition is unavailable', () => {
+    expect(speechRecognitionUnavailableMessage(mockWindow({ isSecureContext: false }))).toBe('语音输入需要 HTTPS。也可以点“系统语音输入”，用手机键盘麦克风输入后插入终端。');
+  });
+
+  it('keeps the generic unavailable message for secure contexts without speech recognition support', () => {
+    expect(speechRecognitionUnavailableMessage(mockWindow({ isSecureContext: true }))).toBe('此浏览器暂不支持语音输入。');
   });
 });
