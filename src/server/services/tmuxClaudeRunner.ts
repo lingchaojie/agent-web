@@ -15,6 +15,7 @@ type ExecFileSyncFn = (file: string, args: readonly string[], options: { stdio: 
 type TmuxClaudeRunnerOptions = {
   claudeBin: string;
   tmuxBin?: string;
+  shellBin?: string;
   execFileSync?: ExecFileSyncFn;
   now?: () => Date;
 };
@@ -22,6 +23,7 @@ type TmuxClaudeRunnerOptions = {
 type ResolvedTmuxClaudeRunnerOptions = {
   claudeBin: string;
   tmuxBin: string;
+  shellBin: string;
   execFileSync: ExecFileSyncFn;
   now?: () => Date;
 };
@@ -34,6 +36,7 @@ type RunningSession = {
 type CallbackSet<T> = Map<string, Set<T>>;
 
 const TMUX_STDIO = { stdio: 'pipe' } as const;
+const TMUX_ENV_KEYS = ['PATH', 'HOME', 'SHELL', 'USER', 'LOGNAME', 'LANG', 'LC_ALL', 'LC_CTYPE', 'NVM_DIR', 'VOLTA_HOME', 'PNPM_HOME', 'NODE_PATH', 'CLAUDE_CONFIG_DIR'] as const;
 
 export function tmuxTargetForSession(sessionId: string): string {
   const sanitized = sessionId
@@ -53,6 +56,7 @@ export class TmuxClaudeRunner implements ClaudeEventSource {
     this.options = {
       claudeBin: options.claudeBin,
       tmuxBin: options.tmuxBin ?? 'tmux',
+      shellBin: options.shellBin ?? process.env.SHELL ?? '/bin/sh',
       execFileSync: options.execFileSync ?? defaultExecFileSync,
       now: options.now,
     };
@@ -93,13 +97,15 @@ export class TmuxClaudeRunner implements ClaudeEventSource {
     this.execFileSync()(this.options.tmuxBin, [
       'new-session',
       '-d',
+      ...tmuxEnvironmentArgs(process.env),
       '-s',
       target,
       '-c',
       input.cwd,
       '--',
-      this.options.claudeBin,
-      ...claudeArgsFor(input),
+      this.options.shellBin,
+      '-lc',
+      shellCommand([this.options.claudeBin, ...claudeArgsFor(input)]),
     ], TMUX_STDIO);
 
     this.sessions.set(input.sessionId, { target, input });
@@ -179,4 +185,21 @@ function claudeArgsFor(input: ClaudeEventSourceStartInput): string[] {
   if (input.mode === 'continue') return ['-c'];
   if (input.mode === 'resume') return ['-r', input.claudeSessionId];
   return [];
+}
+
+function tmuxEnvironmentArgs(env: NodeJS.ProcessEnv): string[] {
+  const args: string[] = [];
+  for (const key of TMUX_ENV_KEYS) {
+    const value = env[key];
+    if (value !== undefined) args.push('-e', `${key}=${value}`);
+  }
+  return args;
+}
+
+function shellCommand(args: string[]): string {
+  return args.map(shellQuote).join(' ');
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'"'"'`)}'`;
 }

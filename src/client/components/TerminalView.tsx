@@ -8,6 +8,7 @@ import { openTerminalSocket, sendTerminalWs } from '../api';
 type TerminalViewProps = {
   sessionId: string;
   title: string;
+  visible?: boolean;
   onBack(): void;
 };
 
@@ -15,7 +16,9 @@ type TerminalStatus = TerminalConnectionStatus | 'disconnected';
 
 type ShortcutKey = {
   label: string;
-  data: string;
+  data?: string;
+  scrollPages?: number;
+  scrollToBottom?: boolean;
 };
 
 const SHORTCUT_KEYS: ShortcutKey[] = [
@@ -27,15 +30,19 @@ const SHORTCUT_KEYS: ShortcutKey[] = [
   { label: '↓', data: '\x1b[B' },
   { label: '←', data: '\x1b[D' },
   { label: '→', data: '\x1b[C' },
+  { label: 'PgUp', scrollPages: -1 },
+  { label: 'PgDn', scrollPages: 1 },
+  { label: '底部', scrollToBottom: true },
   { label: 'Enter', data: '\r' },
 ];
 
-export default function TerminalView({ sessionId, title, onBack }: TerminalViewProps) {
+export default function TerminalView({ sessionId, title, visible = true, onBack }: TerminalViewProps) {
   const terminalHostRef = useRef<HTMLDivElement | null>(null);
   const terminalRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
   const attachedRef = useRef(false);
+  const previousVisibleRef = useRef(visible);
   const [status, setStatus] = useState<TerminalStatus>('connecting');
   const [statusMessage, setStatusMessage] = useState('正在连接终端…');
 
@@ -133,6 +140,35 @@ export default function TerminalView({ sessionId, title, onBack }: TerminalViewP
     };
   }, [sessionId]);
 
+  useEffect(() => {
+    const wasVisible = previousVisibleRef.current;
+    previousVisibleRef.current = visible;
+    if (!visible || wasVisible) return;
+    const frame = requestAnimationFrame(() => {
+      const fitAddon = fitAddonRef.current;
+      if (!fitAddon) return;
+      fitTerminal(fitAddon);
+      if (attachedRef.current) sendResize();
+      terminalRef.current?.focus();
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [visible]);
+
+  function handleShortcut(key: ShortcutKey) {
+    const terminal = terminalRef.current;
+    if (key.scrollToBottom) {
+      terminal?.scrollToBottom();
+      terminal?.focus();
+      return;
+    }
+    if (typeof key.scrollPages === 'number') {
+      terminal?.scrollPages(key.scrollPages);
+      terminal?.focus();
+      return;
+    }
+    if (key.data) sendInput(key.data);
+  }
+
   function sendInput(data: string) {
     const socket = socketRef.current;
     if (!attachedRef.current || !socket || socket.readyState !== WebSocket.OPEN) return;
@@ -164,11 +200,13 @@ export default function TerminalView({ sessionId, title, onBack }: TerminalViewP
         {statusMessage ? <div className={`terminal-status ${status}`} role="status">{statusMessage}</div> : null}
       </header>
 
-      <div className="terminal-container" ref={terminalHostRef} />
+      <div className="terminal-container">
+        <div className="terminal-xterm-host" ref={terminalHostRef} />
+      </div>
 
       <div className="terminal-shortcut-bar" aria-label="Terminal shortcut keys">
         {SHORTCUT_KEYS.map((key) => (
-          <button className="terminal-key" key={key.label} type="button" onClick={() => sendInput(key.data)}>
+          <button className="terminal-key" key={key.label} type="button" onClick={() => handleShortcut(key)}>
             {key.label}
           </button>
         ))}

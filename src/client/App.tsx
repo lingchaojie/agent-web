@@ -303,6 +303,7 @@ export default function App() {
             session={selectedChat?.kind === 'session' ? selectedChat.session : selectedChat?.session ?? null}
             transcript={transcript}
             transcriptLoadingOlder={transcriptLoadingOlder}
+            mobilePaneVisible={mobilePane === 'chat'}
             onLoadOlderTranscript={loadOlderTranscript}
             onBackToSessions={() => setMobilePane('sessions')}
             onStop={handleStopSession}

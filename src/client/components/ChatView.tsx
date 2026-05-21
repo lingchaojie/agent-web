@@ -8,19 +8,20 @@ type ChatViewProps = {
   session: DisplaySession | null;
   transcript?: TranscriptWindow | null;
   transcriptLoadingOlder?: boolean;
+  mobilePaneVisible?: boolean;
   onLoadOlderTranscript?(): void;
   onBackToSessions(): void;
   onStop(session: ClaudeSession): void;
   persistentTerminals?: ClaudeSession[];
 };
 
-export default function ChatView({ session, transcript, transcriptLoadingOlder = false, onLoadOlderTranscript = () => undefined, onBackToSessions, onStop, persistentTerminals = [] }: ChatViewProps) {
+export default function ChatView({ session, transcript, transcriptLoadingOlder = false, mobilePaneVisible = true, onLoadOlderTranscript = () => undefined, onBackToSessions, onStop, persistentTerminals = [] }: ChatViewProps) {
   const runningTerminals = persistentTerminals.filter((terminalSession) => terminalSession.status === 'running');
 
   if (!session) {
     return (
       <>
-        {runningTerminals.length > 0 ? <TerminalStack sessions={runningTerminals} activeSessionId={null} onBack={onBackToSessions} /> : null}
+        {runningTerminals.length > 0 ? <TerminalStack sessions={runningTerminals} activeSessionId={null} mobilePaneVisible={mobilePaneVisible} onBack={onBackToSessions} /> : null}
         <section className="panel chat-panel idle-panel">
           <div className="mobile-panel-nav">
             <button className="secondary-button compact" type="button" onClick={onBackToSessions}>
@@ -39,12 +40,12 @@ export default function ChatView({ session, transcript, transcriptLoadingOlder =
   const claudeSession = isClaudeSession(session) ? session : null;
 
   if (claudeSession?.status === 'running') {
-    return <TerminalStack sessions={mergePersistentTerminals(persistentTerminals, claudeSession)} activeSessionId={claudeSession.id} activeTitle={title} onBack={onBackToSessions} />;
+    return <TerminalStack sessions={mergePersistentTerminals(persistentTerminals, claudeSession)} activeSessionId={claudeSession.id} activeTitle={title} mobilePaneVisible={mobilePaneVisible} onBack={onBackToSessions} />;
   }
 
   return (
     <>
-      {runningTerminals.length > 0 ? <TerminalStack sessions={runningTerminals} activeSessionId={null} onBack={onBackToSessions} /> : null}
+      {runningTerminals.length > 0 ? <TerminalStack sessions={runningTerminals} activeSessionId={null} mobilePaneVisible={mobilePaneVisible} onBack={onBackToSessions} /> : null}
 
       <section className="panel chat-panel" data-native-shell="chat">
         <div className="mobile-panel-nav">
@@ -85,17 +86,18 @@ type TerminalStackProps = {
   sessions: ClaudeSession[];
   activeSessionId: string | null;
   activeTitle?: string;
+  mobilePaneVisible: boolean;
   onBack(): void;
 };
 
-function TerminalStack({ sessions, activeSessionId, activeTitle, onBack }: TerminalStackProps) {
+function TerminalStack({ sessions, activeSessionId, activeTitle, mobilePaneVisible, onBack }: TerminalStackProps) {
   return (
     <div className="terminal-stack">
       {sessions.map((terminalSession) => {
         const active = terminalSession.id === activeSessionId;
         return (
           <div className="terminal-stack-item" data-active={active ? 'true' : 'false'} key={terminalSession.id}>
-            <TerminalView sessionId={terminalSession.id} title={active ? activeTitle ?? terminalSession.title : terminalSession.title} onBack={onBack} />
+            <TerminalView sessionId={terminalSession.id} title={active ? activeTitle ?? terminalSession.title : terminalSession.title} visible={mobilePaneVisible && active} onBack={onBack} />
           </div>
         );
       })}

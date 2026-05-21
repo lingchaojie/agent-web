@@ -19,18 +19,20 @@ vi.mock('../../src/client/api', () => ({
 const terminalMockState = vi.hoisted(() => ({
   nextInstanceId: 0,
   unmounts: [] as string[],
+  visibility: new Map<string, boolean>(),
 }));
 
 vi.mock('../../src/client/components/TerminalView', async () => {
   const React = await import('react');
   return {
-    default: ({ sessionId, title, onBack }: { sessionId: string; title: string; onBack(): void }) => {
+    default: ({ sessionId, title, visible = true, onBack }: { sessionId: string; title: string; visible?: boolean; onBack(): void }) => {
       const instanceId = React.useRef(`${sessionId}-${++terminalMockState.nextInstanceId}`).current;
+      terminalMockState.visibility.set(instanceId, visible);
       React.useEffect(() => () => {
         terminalMockState.unmounts.push(instanceId);
       }, [instanceId]);
       return (
-        <section aria-label="Claude Code terminal" data-instance-id={instanceId}>
+        <section aria-label="Claude Code terminal" data-instance-id={instanceId} data-visible={visible ? 'true' : 'false'}>
           <h3>{title}</h3>
           <p>terminal session: {sessionId}</p>
           <button type="button" onClick={onBack}>返回会话</button>
@@ -78,6 +80,7 @@ describe('App terminal-first session flow', () => {
     localStorage.clear();
     terminalMockState.nextInstanceId = 0;
     terminalMockState.unmounts = [];
+    terminalMockState.visibility = new Map();
     vi.mocked(checkAuth).mockResolvedValue(true);
     vi.mocked(listProjects).mockResolvedValue([project]);
     vi.mocked(listHistory).mockResolvedValue([]);
@@ -136,12 +139,15 @@ describe('App terminal-first session flow', () => {
     fireEvent.click(await liveSessionButton());
     const terminal = await screen.findByRole('region', { name: 'Claude Code terminal' });
     const instanceId = terminal.getAttribute('data-instance-id');
+    expect(terminal).toHaveAttribute('data-visible', 'true');
 
     fireEvent.click(screen.getByRole('button', { name: '返回会话' }));
+    expect(screen.getByRole('region', { name: 'Claude Code terminal' })).toHaveAttribute('data-visible', 'false');
     fireEvent.click(screen.getByRole('button', { name: '← 项目' }));
     await clickProject();
     fireEvent.click(await liveSessionButton());
     expect(screen.getByRole('region', { name: 'Claude Code terminal' })).toHaveAttribute('data-instance-id', instanceId);
+    expect(screen.getByRole('region', { name: 'Claude Code terminal' })).toHaveAttribute('data-visible', 'true');
 
     fireEvent.click(screen.getByRole('button', { name: '返回会话' }));
     fireEvent.click(await screen.findByRole('button', { name: /Demo history Pick up the prior task/i }));
@@ -150,6 +156,8 @@ describe('App terminal-first session flow', () => {
 
     expect(container.querySelector('.native-shell')).toHaveAttribute('data-mobile-pane', 'chat');
     expect(screen.getByRole('region', { name: 'Claude Code terminal' })).toHaveAttribute('data-instance-id', instanceId);
+    expect(screen.getByRole('region', { name: 'Claude Code terminal' })).toHaveAttribute('data-visible', 'true');
+    expect(terminalMockState.visibility.get(instanceId!)).toBe(true);
     expect(terminalMockState.unmounts).toEqual([]);
   });
 

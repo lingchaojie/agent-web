@@ -13,6 +13,8 @@ const xtermMocks = vi.hoisted(() => {
     write = vi.fn();
     loadAddon = vi.fn();
     focus = vi.fn();
+    scrollPages = vi.fn();
+    scrollToBottom = vi.fn();
     dispose = vi.fn();
     private readonly dataCallbacks: Array<(data: string) => void> = [];
     readonly dataDisposables: Array<{ dispose: ReturnType<typeof vi.fn> }> = [];
@@ -182,7 +184,7 @@ describe('TerminalView', () => {
     render(<TerminalView sessionId="session-1" title="Claude shell" onBack={vi.fn()} />);
     const terminal = xtermMocks.terminalInstances[0];
 
-    for (const label of ['Esc', 'Tab', 'Ctrl+C', 'Ctrl+D', '↑', '↓', '←', '→', 'Enter']) {
+    for (const label of ['Esc', 'Tab', 'Ctrl+C', 'Ctrl+D', '↑', '↓', '←', '→', 'PgUp', 'PgDn', '底部', 'Enter']) {
       expect(screen.getByRole('button', { name: label })).toBeInTheDocument();
     }
 
@@ -208,6 +210,26 @@ describe('TerminalView', () => {
     expect(sendTerminalWs).toHaveBeenCalledWith(socket, { type: 'input', sessionId: 'session-1', data: '/' });
     expect(sendTerminalWs).toHaveBeenCalledWith(socket, { type: 'input', sessionId: 'session-1', data: '\x03' });
     expect(sendTerminalWs).toHaveBeenCalledWith(socket, { type: 'input', sessionId: 'session-1', data: '\r' });
+  });
+
+  it('scrolls terminal history from mobile shortcut buttons without sending input', async () => {
+    render(<TerminalView sessionId="session-1" title="Claude shell" onBack={vi.fn()} />);
+    const terminal = xtermMocks.terminalInstances[0];
+
+    socket.open();
+    socket.receive({ type: 'status', sessionId: 'session-1', status: 'attached' });
+    vi.mocked(sendTerminalWs).mockClear();
+    vi.mocked(terminal.focus).mockClear();
+
+    fireEvent.click(screen.getByRole('button', { name: 'PgUp' }));
+    fireEvent.click(screen.getByRole('button', { name: 'PgDn' }));
+    fireEvent.click(screen.getByRole('button', { name: '底部' }));
+
+    await waitFor(() => expect(terminal.scrollPages).toHaveBeenCalledWith(-1));
+    expect(terminal.scrollPages).toHaveBeenCalledWith(1);
+    expect(terminal.scrollToBottom).toHaveBeenCalledTimes(1);
+    expect(terminal.focus.mock.calls.length).toBeGreaterThanOrEqual(3);
+    expect(sendTerminalWs).not.toHaveBeenCalled();
   });
 
   it('fits on resize and sends resized dimensions after the terminal is attached', async () => {
@@ -244,6 +266,26 @@ describe('TerminalView', () => {
     resizeObservers[0].trigger();
 
     expect(sendTerminalWs).not.toHaveBeenCalled();
+  });
+
+  it('refits and resizes when a hidden terminal becomes visible again', async () => {
+    const { rerender } = render(<TerminalView sessionId="session-1" title="Claude shell" visible={true} onBack={vi.fn()} />);
+    const terminal = xtermMocks.terminalInstances[0];
+    const fitAddon = xtermMocks.fitAddonInstances[0];
+
+    socket.open();
+    socket.receive({ type: 'status', sessionId: 'session-1', status: 'attached' });
+    vi.mocked(sendTerminalWs).mockClear();
+    vi.mocked(fitAddon.fit).mockClear();
+    vi.mocked(terminal.focus).mockClear();
+
+    rerender(<TerminalView sessionId="session-1" title="Claude shell" visible={false} onBack={vi.fn()} />);
+    fitAddon.dimensions = { cols: 92, rows: 28 };
+    rerender(<TerminalView sessionId="session-1" title="Claude shell" visible={true} onBack={vi.fn()} />);
+
+    await waitFor(() => expect(fitAddon.fit).toHaveBeenCalledTimes(1));
+    expect(sendTerminalWs).toHaveBeenCalledWith(socket, { type: 'resize', sessionId: 'session-1', cols: 92, rows: 28 });
+    expect(terminal.focus).toHaveBeenCalledTimes(1);
   });
 
   it('renders status, error, and disconnected messages', async () => {
