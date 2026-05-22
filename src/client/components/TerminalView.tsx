@@ -36,7 +36,6 @@ const TERMINAL_TOUCH_WHEEL_PIXELS = 24;
 
 const SHORTCUT_KEYS: ShortcutKey[] = [
   { label: 'Esc', data: '\x1b' },
-  { label: '/', data: '/' },
   { label: 'Tab', data: '\t' },
   { label: 'Ctrl+C', data: '\x03' },
   { label: 'Ctrl+D', data: '\x04' },

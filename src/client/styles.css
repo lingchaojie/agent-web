@@ -624,7 +624,7 @@ textarea:focus {
   overflow-x: auto;
   overflow-y: hidden;
   overscroll-behavior: contain;
-  touch-action: none;
+  touch-action: pan-x;
   border: 1px solid #2a211a;
   border-radius: 1rem;
   padding: 0.6rem;
@@ -653,6 +653,20 @@ textarea:focus {
 
 .terminal-xterm-host .xterm-viewport {
   overflow-y: hidden !important;
+}
+
+.terminal-xterm-host .xterm .xterm-helper-textarea {
+  left: 0 !important;
+  top: 0 !important;
+  width: 1px !important;
+  height: 1px !important;
+  min-height: 1px !important;
+  padding: 0 !important;
+  border: 0 !important;
+  outline: 0 !important;
+  box-shadow: none !important;
+  resize: none !important;
+  z-index: 1 !important;
 }
 
 .terminal-shortcut-bar {
@@ -1368,7 +1382,7 @@ textarea:focus {
     overflow-x: auto;
     overflow-y: hidden;
     overscroll-behavior: contain;
-    touch-action: none;
+    touch-action: pan-x;
     border-radius: 0.82rem;
     padding: 0.42rem;
     -webkit-overflow-scrolling: touch;

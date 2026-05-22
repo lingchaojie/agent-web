@@ -254,7 +254,7 @@ describe('TerminalView', () => {
     render(<TerminalView sessionId="session-1" title="Claude shell" onBack={vi.fn()} />);
     const terminal = xtermMocks.terminalInstances[0];
 
-    for (const label of ['Esc', '/', 'Tab', 'Ctrl+C', 'Ctrl+D', '↑', '↓', '←', '→', 'PgUp', 'PgDn', '底部', 'Enter']) {
+    for (const label of ['Esc', 'Tab', 'Ctrl+C', 'Ctrl+D', '↑', '↓', '←', '→', 'PgUp', 'PgDn', '底部', 'Enter']) {
       expect(screen.getByRole('button', { name: label })).toBeInTheDocument();
     }
 
@@ -273,7 +273,6 @@ describe('TerminalView', () => {
     socket.receive({ type: 'status', sessionId: 'session-1', status: 'attached' });
     terminal.emitData('ls\r');
     terminal.emitData('/');
-    fireEvent.click(screen.getByRole('button', { name: '/' }));
     fireEvent.click(screen.getByRole('button', { name: 'Ctrl+C' }));
     fireEvent.click(screen.getByRole('button', { name: 'Enter' }));
 
@@ -609,6 +608,28 @@ describe('TerminalView', () => {
     expect(screen.getByText('终端已在其他浏览器中打开。')).toBeInTheDocument();
     expect(screen.queryByText('语音内容已插入终端。')).not.toBeInTheDocument();
     expect(sendTerminalWs).not.toHaveBeenCalled();
+  });
+
+  it('keeps xterm direct keyboard input stable on mobile', async () => {
+    render(<TerminalView sessionId="session-1" title="Claude shell" onBack={vi.fn()} />);
+    const terminal = xtermMocks.terminalInstances[0];
+
+    await act(async () => {
+      socket.open();
+      socket.receive({ type: 'status', sessionId: 'session-1', status: 'attached' });
+    });
+    vi.mocked(sendTerminalWs).mockClear();
+
+    terminal.emitData('/help');
+
+    expect(sendTerminalWs).toHaveBeenCalledWith(socket, { type: 'input', sessionId: 'session-1', data: '/help' });
+  });
+
+  it('keeps the xterm keyboard textarea inside the terminal on mobile', () => {
+    const styles = readFileSync(stylesPath, 'utf8');
+
+    expect(styles).toMatch(/\.terminal-container\s*\{[^}]*touch-action:\s*pan-x\s*;/s);
+    expect(styles).toMatch(/\.terminal-xterm-host \.xterm \.xterm-helper-textarea\s*\{[^}]*left:\s*0\s*!important;[^}]*top:\s*0\s*!important;[^}]*width:\s*1px\s*!important;[^}]*height:\s*1px\s*!important;[^}]*min-height:\s*1px\s*!important;[^}]*padding:\s*0\s*!important;[^}]*box-shadow:\s*none\s*!important;/s);
   });
 
   it('keeps voice status in the shrinkable final track when the fallback panel is closed', () => {
