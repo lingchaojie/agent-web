@@ -117,6 +117,23 @@ describe('backend routes', () => {
     await app.close();
   });
 
+  it('includes Claude config projects in the project list', async () => {
+    const context = fakeContext({ claudeConfigDir: join(root, '.claude') });
+    const configProjectPath = join(root, 'config-project');
+    mkdirSync(join(root, '.claude'), { recursive: true });
+    mkdirSync(join(configProjectPath, '.claude'), { recursive: true });
+    writeFileSync(join(root, '.claude', '.claude.json'), JSON.stringify({ projects: { [configProjectPath]: {} } }));
+    const app = await createApp(context);
+
+    const listed = await app.inject({ method: 'GET', url: '/api/projects', headers: authHeaders() });
+
+    expect(listed.json()).toEqual([
+      expect.objectContaining({ path: configProjectPath, name: 'config-project', source: 'claude-config' }),
+    ]);
+
+    await app.close();
+  });
+
   it('returns project-scoped slash command metadata without command bodies', async () => {
     const project = fakeProject({ id: 'project-1', path: root });
     mkdirSync(join(root, '.claude', 'commands', 'opsx'), { recursive: true });

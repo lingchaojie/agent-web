@@ -454,7 +454,7 @@ describe('TerminalView', () => {
       fireEvent.click(screen.getByRole('button', { name: '系统语音输入' }));
     });
 
-    const textarea = screen.getByRole('textbox', { name: '系统语音输入文本' });
+    const textarea = screen.getByRole('textbox', { name: '终端文本输入' });
     expect(textarea).toBeInTheDocument();
     await waitFor(() => expect(textarea).toHaveFocus());
     expect(screen.getByRole('button', { name: '插入终端' })).toBeInTheDocument();
@@ -475,7 +475,7 @@ describe('TerminalView', () => {
       fireEvent.click(screen.getByRole('button', { name: '系统语音输入' }));
     });
 
-    const textarea = screen.getByRole('textbox', { name: '系统语音输入文本' });
+    const textarea = screen.getByRole('textbox', { name: '终端文本输入' });
     await act(async () => {
       fireEvent.change(textarea, { target: { value: '  你好 Claude  ' } });
     });
@@ -486,13 +486,50 @@ describe('TerminalView', () => {
 
     expect(sendTerminalWs).toHaveBeenCalledWith(socket, { type: 'input', sessionId: 'session-1', data: '你好 Claude' });
     expect(sendTerminalWs).not.toHaveBeenCalledWith(socket, expect.objectContaining({ data: expect.stringContaining('\r') }));
-    expect(screen.queryByRole('textbox', { name: '系统语音输入文本' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('textbox', { name: '终端文本输入' })).not.toBeInTheDocument();
 
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: '系统语音输入' }));
     });
 
-    expect(screen.getByRole('textbox', { name: '系统语音输入文本' })).toHaveValue('');
+    expect(screen.getByRole('textbox', { name: '终端文本输入' })).toHaveValue('');
+  });
+
+  it('opens the same terminal text box for paste/input when speech recognition is available', async () => {
+    enableSpeechRecognition();
+    const readText = vi.fn();
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { readText },
+    });
+    render(<TerminalView sessionId="session-1" title="Claude shell" onBack={vi.fn()} />);
+
+    await act(async () => {
+      socket.open();
+      socket.receive({ type: 'status', sessionId: 'session-1', status: 'attached' });
+    });
+    vi.mocked(sendTerminalWs).mockClear();
+
+    expect(screen.getByRole('button', { name: '按住说话' })).toBeInTheDocument();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: '粘贴/输入' }));
+    });
+
+    const textarea = screen.getByRole('textbox', { name: '终端文本输入' });
+    await waitFor(() => expect(textarea).toHaveFocus());
+    await act(async () => {
+      fireEvent.change(textarea, { target: { value: 'printf "hello"\nls -la' } });
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: '插入终端' }));
+    });
+
+    expect(readText).not.toHaveBeenCalled();
+    expect(sendTerminalWs).toHaveBeenCalledWith(socket, { type: 'input', sessionId: 'session-1', data: 'printf "hello"\nls -la' });
+    expect(sendTerminalWs).not.toHaveBeenCalledWith(socket, expect.objectContaining({ data: expect.stringContaining('\r') }));
+    expect(screen.queryByRole('textbox', { name: '终端文本输入' })).not.toBeInTheDocument();
   });
 
   it('does not send empty fallback text', async () => {
@@ -510,12 +547,12 @@ describe('TerminalView', () => {
     });
 
     await act(async () => {
-      fireEvent.change(screen.getByRole('textbox', { name: '系统语音输入文本' }), { target: { value: '   ' } });
+      fireEvent.change(screen.getByRole('textbox', { name: '终端文本输入' }), { target: { value: '   ' } });
       fireEvent.click(screen.getByRole('button', { name: '插入终端' }));
     });
 
     expect(sendTerminalWs).not.toHaveBeenCalled();
-    expect(screen.getByRole('textbox', { name: '系统语音输入文本' })).toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: '终端文本输入' })).toBeInTheDocument();
   });
 
   it('closes the fallback panel without sending when cancelled', async () => {
@@ -533,7 +570,7 @@ describe('TerminalView', () => {
     });
 
     await act(async () => {
-      fireEvent.change(screen.getByRole('textbox', { name: '系统语音输入文本' }), { target: { value: '不要发送' } });
+      fireEvent.change(screen.getByRole('textbox', { name: '终端文本输入' }), { target: { value: '不要发送' } });
     });
 
     await act(async () => {
@@ -541,7 +578,7 @@ describe('TerminalView', () => {
     });
 
     expect(sendTerminalWs).not.toHaveBeenCalled();
-    expect(screen.queryByRole('textbox', { name: '系统语音输入文本' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('textbox', { name: '终端文本输入' })).not.toBeInTheDocument();
   });
 
   it('closes the fallback panel without claiming success when the terminal detaches', async () => {
@@ -558,7 +595,7 @@ describe('TerminalView', () => {
     });
 
     await act(async () => {
-      fireEvent.change(screen.getByRole('textbox', { name: '系统语音输入文本' }), { target: { value: '断开前的文本' } });
+      fireEvent.change(screen.getByRole('textbox', { name: '终端文本输入' }), { target: { value: '断开前的文本' } });
     });
 
     vi.mocked(sendTerminalWs).mockClear();
@@ -567,7 +604,7 @@ describe('TerminalView', () => {
       socket.receive({ type: 'status', sessionId: 'session-1', status: 'rejected' });
     });
 
-    expect(screen.queryByRole('textbox', { name: '系统语音输入文本' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('textbox', { name: '终端文本输入' })).not.toBeInTheDocument();
     expect(screen.getByText('终端已在其他浏览器中打开。')).toBeInTheDocument();
     expect(screen.queryByText('语音内容已插入终端。')).not.toBeInTheDocument();
     expect(sendTerminalWs).not.toHaveBeenCalled();

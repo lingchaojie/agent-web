@@ -517,7 +517,7 @@ export default function TerminalView({ sessionId, title, visible = true, onBack 
     const socket = socketRef.current;
     if (!attachedRef.current || !socket || socket.readyState !== WebSocket.OPEN) return;
     sendInput(text);
-    setVoiceMessage('语音内容已插入终端。');
+    setVoiceMessage('文本已插入终端。');
     closeFallbackInput();
   }
 
@@ -583,7 +583,11 @@ export default function TerminalView({ sessionId, title, visible = true, onBack 
               <button className="terminal-key terminal-voice-cancel" type="button" onClick={() => cancelVoiceHold()}>
                 取消
               </button>
-            ) : null}
+            ) : (
+              <button className="terminal-key terminal-text-input-button" disabled={!isAttached} type="button" onClick={openFallbackInput}>
+                粘贴/输入
+              </button>
+            )}
             <p className="terminal-voice-status" role="status">{interimTranscript ? `正在识别：${interimTranscript}` : voiceMessage}</p>
           </>
         ) : (
@@ -598,29 +602,29 @@ export default function TerminalView({ sessionId, title, visible = true, onBack 
               系统语音输入
             </button>
             <p className="terminal-voice-status" role="status">{voiceMessage}</p>
-            {fallbackOpen ? (
-              <div className="terminal-voice-fallback-panel">
-                <textarea
-                  aria-label="系统语音输入文本"
-                  className="terminal-voice-fallback-input"
-                  onChange={(event) => setFallbackValue(event.target.value)}
-                  placeholder="点这里唤起手机键盘，再用系统麦克风语音输入"
-                  ref={fallbackInputRef}
-                  rows={2}
-                  value={fallbackValue}
-                />
-                <div className="terminal-voice-fallback-actions">
-                  <button className="terminal-key" type="button" onClick={insertFallbackInput}>
-                    插入终端
-                  </button>
-                  <button className="terminal-key" type="button" onClick={closeFallbackInput}>
-                    取消
-                  </button>
-                </div>
-              </div>
-            ) : null}
           </>
         )}
+        {fallbackOpen ? (
+          <div className="terminal-voice-fallback-panel">
+            <textarea
+              aria-label="终端文本输入"
+              className="terminal-voice-fallback-input"
+              onChange={(event) => setFallbackValue(event.target.value)}
+              placeholder="点这里粘贴手机复制的文字，或用系统键盘麦克风输入"
+              ref={fallbackInputRef}
+              rows={2}
+              value={fallbackValue}
+            />
+            <div className="terminal-voice-fallback-actions">
+              <button className="terminal-key" type="button" onClick={insertFallbackInput}>
+                插入终端
+              </button>
+              <button className="terminal-key" type="button" onClick={closeFallbackInput}>
+                取消
+              </button>
+            </div>
+          </div>
+        ) : null}
       </div>
 
       <div className="terminal-shortcut-bar" aria-label="Terminal shortcut keys">

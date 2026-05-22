@@ -1,4 +1,4 @@
-export type ProjectSource = 'whitelist' | 'history' | 'active-client';
+export type ProjectSource = 'whitelist' | 'history' | 'active-client' | 'claude-config';
 
 export type Project = {
   id: string;

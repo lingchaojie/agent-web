@@ -171,6 +171,9 @@ export default function App() {
   }
 
   function handleSessionOpen(session: ClaudeSession) {
+    if (session.projectId !== selectedProjectId) {
+      setSelectedProjectId(session.projectId);
+    }
     void selectSession(session);
   }
 
@@ -271,16 +274,31 @@ export default function App() {
           <p className="eyebrow">Claude Code</p>
           <h1>移动控制台</h1>
         </div>
-        <button className="secondary-button compact" type="button" onClick={refreshProjectsAndHistory} disabled={loading}>
-          刷新
-        </button>
+        <div className="topbar-actions">
+          {mobilePane !== 'projects' ? (
+            <button className="secondary-button compact" type="button" onClick={() => setMobilePane('projects')}>
+              返回项目
+            </button>
+          ) : null}
+          <button className="secondary-button compact" type="button" onClick={refreshProjectsAndHistory} disabled={loading}>
+            刷新
+          </button>
+        </div>
       </header>
 
       {error ? <div className="error-banner global-error">{error}</div> : null}
 
       <div className="native-shell" data-native-shell="app" data-mobile-pane={mobilePane}>
         <aside className="workspace-sidebar" aria-label="工作区">
-          <ProjectList projects={projects} selectedProjectId={selectedProjectId} onSelect={handleProjectSelect} />
+          <ProjectList
+            projects={projects}
+            selectedProjectId={selectedProjectId}
+            runningSessions={persistentTerminalSessions.filter((session) => session.status === 'running')}
+            selectedSessionId={selectedChat?.kind === 'session' ? selectedChat.session.id : null}
+            onSelect={handleProjectSelect}
+            onOpenSession={handleSessionOpen}
+            onStopSession={handleStopSession}
+          />
         </aside>
         <aside className="session-rail" aria-label="会话">
           <SessionList

@@ -18,10 +18,20 @@ export function projectPathFromHistoryId(id: string): string | null {
   }
 }
 
-export function mergeDiscoveredProjects(whitelistProjects: Project[], history: HistorySession[], externalSessions: ClaudeSession[] = []): Project[] {
+export function mergeDiscoveredProjects(
+  whitelistProjects: Project[],
+  history: HistorySession[],
+  externalSessions: ClaudeSession[] = [],
+  claudeConfigProjects: Project[] = [],
+): Project[] {
   const byPath = new Map<string, Project>();
 
   for (const project of whitelistProjects) {
+    byPath.set(project.path, project);
+  }
+
+  for (const project of claudeConfigProjects) {
+    if (byPath.has(project.path) || !isAvailableProjectPath(project.path)) continue;
     byPath.set(project.path, project);
   }
 

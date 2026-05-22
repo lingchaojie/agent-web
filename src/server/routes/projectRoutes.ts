@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import type { RouteContext } from '../app';
 import { getAvailableHistory } from './historyRoutes';
+import { discoverClaudeConfigProjects } from '../services/claudeConfigProjects';
 import { mergeDiscoveredProjects } from '../services/projectDiscovery';
 
 const addProjectSchema = z.object({
@@ -17,7 +18,12 @@ export function registerProjectRoutes(app: FastifyInstance, context: RouteContex
     } catch {
       // Existing sessions still identify active client workspaces if tmux refresh is temporarily unavailable.
     }
-    return mergeDiscoveredProjects(context.projects.listProjects(), getAvailableHistory(context), context.sessions.listExternalSessions());
+    return mergeDiscoveredProjects(
+      context.projects.listProjects(),
+      getAvailableHistory(context),
+      context.sessions.listExternalSessions(),
+      discoverClaudeConfigProjects(context.config.claudeConfigDir),
+    );
   });
 
   app.post('/api/projects', async (request, reply) => {

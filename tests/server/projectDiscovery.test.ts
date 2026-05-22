@@ -94,6 +94,24 @@ describe('projectDiscovery', () => {
 
     expect(projects).toEqual([whitelistProject]);
   });
+
+  it('keeps Claude config projects that contain a project-local .claude directory', () => {
+    mkdirSync(join(projectPath, '.claude'));
+    const configProject: Project = {
+      id: historyProjectId(projectPath),
+      name: 'Config Demo',
+      path: projectPath,
+      favorite: false,
+      available: true,
+      source: 'claude-config',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    };
+
+    const projects = mergeDiscoveredProjects([], [historySession({ projectPath })], [], [configProject]);
+
+    expect(projects).toEqual([configProject]);
+  });
 });
 
 function historySession(overrides: Partial<HistorySession> = {}): HistorySession {

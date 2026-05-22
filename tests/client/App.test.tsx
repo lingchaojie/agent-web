@@ -104,7 +104,9 @@ describe('App terminal-first session flow', () => {
     fireEvent.click(screen.getByRole('button', { name: /demo/i }));
     expect(shell).toHaveAttribute('data-mobile-pane', 'sessions');
 
-    fireEvent.click(screen.getByRole('button', { name: '新建会话' }));
+    const newSessionButton = await screen.findByRole('button', { name: '新建会话' });
+    await waitFor(() => expect(newSessionButton).toBeEnabled());
+    fireEvent.click(newSessionButton);
 
     await waitFor(() => expect(createSession).toHaveBeenCalledWith(project.id));
     await waitFor(() => expect(shell).toHaveAttribute('data-mobile-pane', 'chat'));
@@ -122,7 +124,7 @@ describe('App terminal-first session flow', () => {
     fireEvent.click(await screen.findByText('New session'));
 
     expect(await screen.findByRole('region', { name: 'Claude Code terminal' })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: '返回会话' }));
+    fireEvent.click(within(await screen.findByRole('region', { name: 'Claude Code terminal' })).getByRole('button', { name: '返回会话' }));
     expect(container.querySelector('.native-shell')).toHaveAttribute('data-mobile-pane', 'sessions');
   });
 
@@ -141,7 +143,7 @@ describe('App terminal-first session flow', () => {
     const instanceId = terminal.getAttribute('data-instance-id');
     expect(terminal).toHaveAttribute('data-visible', 'true');
 
-    fireEvent.click(screen.getByRole('button', { name: '返回会话' }));
+    fireEvent.click(within(await screen.findByRole('region', { name: 'Claude Code terminal' })).getByRole('button', { name: '返回会话' }));
     expect(screen.getByRole('region', { name: 'Claude Code terminal' })).toHaveAttribute('data-visible', 'false');
     fireEvent.click(screen.getByRole('button', { name: '← 项目' }));
     await clickProject();
@@ -149,7 +151,7 @@ describe('App terminal-first session flow', () => {
     expect(screen.getByRole('region', { name: 'Claude Code terminal' })).toHaveAttribute('data-instance-id', instanceId);
     expect(screen.getByRole('region', { name: 'Claude Code terminal' })).toHaveAttribute('data-visible', 'true');
 
-    fireEvent.click(screen.getByRole('button', { name: '返回会话' }));
+    fireEvent.click(within(await screen.findByRole('region', { name: 'Claude Code terminal' })).getByRole('button', { name: '返回会话' }));
     fireEvent.click(await screen.findByRole('button', { name: /Demo history Pick up the prior task/i }));
     expect(await screen.findByText('Historical prompt')).toBeInTheDocument();
     fireEvent.click(await liveSessionButton());
@@ -159,6 +161,95 @@ describe('App terminal-first session flow', () => {
     expect(screen.getByRole('region', { name: 'Claude Code terminal' })).toHaveAttribute('data-visible', 'true');
     expect(terminalMockState.visibility.get(instanceId!)).toBe(true);
     expect(terminalMockState.unmounts).toEqual([]);
+  });
+
+  it('shows a fixed topbar return action while viewing sessions and chat', async () => {
+    vi.mocked(listSessions).mockResolvedValue([session]);
+    const { container } = render(<App />);
+
+    await clickProject();
+    const shell = container.querySelector('.native-shell');
+    expect(shell).toHaveAttribute('data-mobile-pane', 'sessions');
+    expect(screen.getByRole('button', { name: '返回项目' }).closest('.topbar-actions')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: '返回项目' }));
+    expect(shell).toHaveAttribute('data-mobile-pane', 'projects');
+
+    await clickProject();
+    fireEvent.click(await liveSessionButton());
+    expect(shell).toHaveAttribute('data-mobile-pane', 'chat');
+
+    fireEvent.click(screen.getByRole('button', { name: '返回项目' }));
+    expect(shell).toHaveAttribute('data-mobile-pane', 'projects');
+  });
+
+  it('opens a kept running session from the workspace sidebar', async () => {
+    vi.mocked(listSessions).mockResolvedValue([session]);
+    const { container } = render(<App />);
+
+    await clickProject();
+    fireEvent.click(await liveSessionButton());
+    expect(container.querySelector('.native-shell')).toHaveAttribute('data-mobile-pane', 'chat');
+
+    fireEvent.click(screen.getByRole('button', { name: '返回项目' }));
+    expect(container.querySelector('.native-shell')).toHaveAttribute('data-mobile-pane', 'projects');
+
+    const workspace = await screen.findByRole('complementary', { name: '工作区' });
+    const keptSessions = within(workspace).getByRole('group', { name: '当前保持的会话' });
+    fireEvent.click(within(keptSessions).getByRole('button', { name: /^New session/i }));
+
+    expect(container.querySelector('.native-shell')).toHaveAttribute('data-mobile-pane', 'chat');
+    expect(screen.getByText(`terminal session: ${session.id}`)).toBeInTheDocument();
+  });
+
+  it('returns to the matching project rail after opening a kept session from another project', async () => {
+    const otherProject: Project = {
+      ...project,
+      id: 'history:L3RtcC9vdGhlci1kZW1v',
+      name: 'other-demo',
+      path: '/tmp/other-demo',
+    };
+    const otherSession: ClaudeSession = {
+      ...session,
+      id: 'session-2',
+      projectId: otherProject.id,
+      title: 'Other project session',
+      lastActiveAt: '2026-01-01T00:05:00.000Z',
+    };
+    vi.mocked(listProjects).mockResolvedValue([project, otherProject]);
+    vi.mocked(listSessions).mockImplementation(async (projectId: string) => {
+      if (projectId === project.id) return [session];
+      if (projectId === otherProject.id) return [otherSession];
+      return [];
+    });
+
+    const { container } = render(<App />);
+
+    const workspace = await screen.findByRole('complementary', { name: '工作区' });
+    fireEvent.click(await within(workspace).findByRole('button', { name: /other-demo/i }));
+    const otherProjectRail = await screen.findByRole('complementary', { name: '会话' });
+    fireEvent.click(await within(otherProjectRail).findByRole('button', { name: /^Other project session/i }));
+    expect(container.querySelector('.native-shell')).toHaveAttribute('data-mobile-pane', 'chat');
+    expect(within(visibleTerminalRegion()).getByText(`terminal session: ${otherSession.id}`)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: '返回项目' }));
+    await clickProject();
+    fireEvent.click(await liveSessionButton());
+    expect(within(visibleTerminalRegion()).getByText(`terminal session: ${session.id}`)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: '返回项目' }));
+    const keptSessions = within(await screen.findByRole('complementary', { name: '工作区' })).getByRole('group', { name: '当前保持的会话' });
+    fireEvent.click(within(keptSessions).getByRole('button', { name: /^Other project session/i }));
+
+    const activeTerminal = visibleTerminalRegion();
+    expect(within(activeTerminal).getByText(`terminal session: ${otherSession.id}`)).toBeInTheDocument();
+    fireEvent.click(within(activeTerminal).getByRole('button', { name: '返回会话' }));
+
+    const sessionRail = await screen.findByRole('complementary', { name: '会话' });
+    await waitFor(() => {
+      expect(within(sessionRail).getByRole('heading', { name: 'other-demo', level: 2 })).toBeInTheDocument();
+      expect(within(sessionRail).getByText('Other project session')).toBeInTheDocument();
+    });
   });
 
   it('restores the selected running session into terminal view after refresh', async () => {
@@ -184,6 +275,23 @@ describe('App terminal-first session flow', () => {
     await waitFor(() => expect(screen.queryByText('New session')).not.toBeInTheDocument());
   });
 
+  it('stops kept running sessions from the workspace sidebar', async () => {
+    vi.mocked(listSessions).mockResolvedValue([session]);
+    const { container } = render(<App />);
+
+    await clickProject();
+    fireEvent.click(await liveSessionButton());
+    expect(container.querySelector('.native-shell')).toHaveAttribute('data-mobile-pane', 'chat');
+
+    fireEvent.click(screen.getByRole('button', { name: '返回项目' }));
+    const workspace = await screen.findByRole('complementary', { name: '工作区' });
+    const keptSessions = within(workspace).getByRole('group', { name: '当前保持的会话' });
+    fireEvent.click(within(keptSessions).getByRole('button', { name: '关闭 New session' }));
+
+    await waitFor(() => expect(stopSession).toHaveBeenCalledWith(session.id));
+    await waitFor(() => expect(within(workspace).queryByRole('group', { name: '当前保持的会话' })).not.toBeInTheDocument());
+  });
+
   it('refreshes live sessions for the selected project', async () => {
     const externalSession: ClaudeSession = {
       ...session,
@@ -199,6 +307,7 @@ describe('App terminal-first session flow', () => {
 
     await screen.findByRole('button', { name: /demo/i });
     fireEvent.click(screen.getByRole('button', { name: /demo/i }));
+    await screen.findByText('当前没有实时会话。');
     expect(screen.queryByText('webagent-claude')).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: '刷新' }));
@@ -301,13 +410,17 @@ describe('App terminal-first session flow', () => {
 
 async function clickProject() {
   const workspace = await screen.findByRole('complementary', { name: '工作区' });
-  fireEvent.click(await within(workspace).findByRole('button', { name: /demo/i }));
+  fireEvent.click(await within(workspace).findByRole('button', { name: /^demo/i }));
 }
 
 async function liveSessionButton() {
   const sessionRail = await screen.findByRole('complementary', { name: '会话' });
   const buttons = await within(sessionRail).findAllByRole('button', { name: /New session/i });
   return buttons.find((button) => button.className.includes('session-open-button')) ?? buttons[0];
+}
+
+function visibleTerminalRegion() {
+  return screen.getAllByRole('region', { name: 'Claude Code terminal' }).find((region) => region.getAttribute('data-visible') === 'true') ?? screen.getByRole('region', { name: 'Claude Code terminal' });
 }
 
 function transcriptWindow(overrides: Partial<TranscriptWindow> = {}): TranscriptWindow {
