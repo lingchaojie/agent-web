@@ -254,7 +254,7 @@ describe('TerminalView', () => {
     render(<TerminalView sessionId="session-1" title="Claude shell" onBack={vi.fn()} />);
     const terminal = xtermMocks.terminalInstances[0];
 
-    for (const label of ['Esc', 'Tab', 'Ctrl+C', 'Ctrl+D', '↑', '↓', '←', '→', 'PgUp', 'PgDn', '底部', 'Enter']) {
+    for (const label of ['Esc', '/', 'Tab', 'Ctrl+C', 'Ctrl+D', '↑', '↓', '←', '→', 'PgUp', 'PgDn', '底部', 'Enter']) {
       expect(screen.getByRole('button', { name: label })).toBeInTheDocument();
     }
 
@@ -273,6 +273,7 @@ describe('TerminalView', () => {
     socket.receive({ type: 'status', sessionId: 'session-1', status: 'attached' });
     terminal.emitData('ls\r');
     terminal.emitData('/');
+    fireEvent.click(screen.getByRole('button', { name: '/' }));
     fireEvent.click(screen.getByRole('button', { name: 'Ctrl+C' }));
     fireEvent.click(screen.getByRole('button', { name: 'Enter' }));
 
