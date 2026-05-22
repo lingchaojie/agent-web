@@ -86,6 +86,19 @@ describe('TerminalAttachService', () => {
     expect(pty.resize).toHaveBeenCalledWith(120, 40);
   });
 
+  it('cancels tmux prompt mode before writing phone keyboard input', () => {
+    const pty = fakePty();
+    const execFileSync = vi.fn();
+    const service = new TerminalAttachService({ spawn: vi.fn(() => pty), execFileSync, targetForSession: () => 'webagent-session-1' });
+    const attach = service.attach({ sessionId: 'session-1' }, vi.fn());
+    execFileSync.mockClear();
+
+    attach?.sendInput('/help', { source: 'mobile-keyboard', resetMode: true });
+
+    expect(execFileSync).toHaveBeenCalledWith('tmux', ['send-keys', '-t', 'webagent-session-1', 'Escape'], { stdio: 'pipe' });
+    expect(pty.write).toHaveBeenCalledWith('/help');
+  });
+
   it('detaches only the active attach PTY and releases the slot', () => {
     const firstPty = fakePty();
     const secondPty = fakePty();

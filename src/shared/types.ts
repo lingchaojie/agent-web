@@ -174,7 +174,7 @@ export type WsClientMessage =
 export type TerminalConnectionStatus = 'connecting' | 'attached' | 'detached' | 'stopped' | 'unavailable' | 'rejected' | 'error';
 export type TerminalClientMessage =
   | { type: 'attach'; sessionId: string; cols?: number; rows?: number }
-  | { type: 'input'; sessionId: string; data: string }
+  | { type: 'input'; sessionId: string; data: string; source?: 'terminal' | 'mobile-keyboard'; resetMode?: boolean }
   | { type: 'resize'; sessionId: string; cols: number; rows: number }
   | { type: 'detach'; sessionId: string };
 export type TerminalServerMessage =

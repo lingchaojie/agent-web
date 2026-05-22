@@ -1175,11 +1175,13 @@ describe('backend routes', () => {
     client.send(JSON.stringify({ type: 'attach', sessionId: session.id, cols: 100, rows: 30 }));
     await waitUntil(() => messages.length > 0);
     client.send(JSON.stringify({ type: 'input', sessionId: session.id, data: 'ls\n' }));
+    client.send(JSON.stringify({ type: 'input', sessionId: session.id, data: '/help', source: 'mobile-keyboard', resetMode: true }));
     client.send(JSON.stringify({ type: 'resize', sessionId: session.id, cols: 140, rows: 50 }));
     client.send(JSON.stringify({ type: 'detach', sessionId: session.id }));
     await waitUntil(() => detach.mock.calls.length > 0 && messages.length > 1);
 
     expect(sendInput).toHaveBeenCalledWith('ls\n');
+    expect(sendInput).toHaveBeenCalledWith('/help', { source: 'mobile-keyboard', resetMode: true });
     expect(resize).toHaveBeenCalledWith(140, 50);
     expect(detach).toHaveBeenCalledTimes(1);
     expect(messages).toEqual([

@@ -633,9 +633,9 @@ describe('TerminalView', () => {
       fireEvent.keyDown(keyboard, { key: 'Backspace' });
     });
 
-    expect(sendTerminalWs).toHaveBeenCalledWith(socket, { type: 'input', sessionId: 'session-1', data: '/help' });
-    expect(sendTerminalWs).toHaveBeenCalledWith(socket, { type: 'input', sessionId: 'session-1', data: '\r' });
-    expect(sendTerminalWs).toHaveBeenCalledWith(socket, { type: 'input', sessionId: 'session-1', data: '\x7f' });
+    expect(sendTerminalWs).toHaveBeenNthCalledWith(1, socket, { type: 'input', sessionId: 'session-1', data: '/help', source: 'mobile-keyboard', resetMode: true });
+    expect(sendTerminalWs).toHaveBeenNthCalledWith(2, socket, { type: 'input', sessionId: 'session-1', data: '\r', source: 'mobile-keyboard', resetMode: false });
+    expect(sendTerminalWs).toHaveBeenNthCalledWith(3, socket, { type: 'input', sessionId: 'session-1', data: '\x7f', source: 'mobile-keyboard', resetMode: false });
     expect(keyboard).toHaveValue('');
   });
 
@@ -643,7 +643,7 @@ describe('TerminalView', () => {
     const styles = readFileSync(stylesPath, 'utf8');
 
     expect(styles).toMatch(/\.terminal-container\s*\{[^}]*position:\s*relative\s*;[^}]*touch-action:\s*pan-x\s*;/s);
-    expect(styles).toMatch(/\.terminal-keyboard-input\s*\{[^}]*position:\s*absolute;[^}]*z-index:\s*2;[^}]*opacity:\s*0\.01;/s);
+    expect(styles).toMatch(/\.terminal-keyboard-input\s*\{[^}]*position:\s*absolute;[^}]*right:\s*0\s*!important;[^}]*bottom:\s*0\s*!important;[^}]*z-index:\s*2;[^}]*width:\s*100%\s*!important;[^}]*height:\s*100%\s*!important;[^}]*opacity:\s*0\.01;/s);
     expect(styles).toMatch(/\.terminal-xterm-host \.xterm \.xterm-helper-textarea,[\s\S]*?\.terminal-keyboard-input\s*\{[^}]*left:\s*0\s*!important;[^}]*top:\s*0\s*!important;[^}]*width:\s*1px\s*!important;[^}]*height:\s*1px\s*!important;[^}]*min-height:\s*1px\s*!important;[^}]*padding:\s*0\s*!important;[^}]*box-shadow:\s*none\s*!important;/s);
   });
 

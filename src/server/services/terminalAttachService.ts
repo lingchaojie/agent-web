@@ -38,7 +38,7 @@ type ActiveAttach = {
 };
 
 export type TerminalAttach = {
-  sendInput(data: string): void;
+  sendInput(data: string, options?: { source?: 'terminal' | 'mobile-keyboard'; resetMode?: boolean }): void;
   resize(cols: number, rows: number): void;
   detach(): void;
 };
@@ -92,8 +92,9 @@ export class TerminalAttachService {
     });
 
     return {
-      sendInput: (data: string) => {
+      sendInput: (data: string, options?: { source?: 'terminal' | 'mobile-keyboard'; resetMode?: boolean }) => {
         if (this.active.get(input.sessionId)?.proc !== proc) return;
+        if (options?.source === 'mobile-keyboard' && options.resetMode) cancelTmuxPromptMode(this.execFileSync, this.tmuxBin, target);
         proc.write(data);
       },
       resize: (cols: number, rows: number) => {
@@ -118,6 +119,14 @@ function enableMouseIfWebagentTarget(execFileSync: ExecFileSyncFn, tmuxBin: stri
   if (typeof target !== 'string' || !target.startsWith('webagent-')) return;
   try {
     execFileSync(tmuxBin, ['set-option', '-t', target, 'mouse', 'on'], { stdio: 'pipe' });
+  } catch {
+  }
+}
+
+function cancelTmuxPromptMode(execFileSync: ExecFileSyncFn, tmuxBin: string, target: TerminalAttachTarget): void {
+  if (typeof target !== 'string') return;
+  try {
+    execFileSync(tmuxBin, ['send-keys', '-t', target, 'Escape'], { stdio: 'pipe' });
   } catch {
   }
 }

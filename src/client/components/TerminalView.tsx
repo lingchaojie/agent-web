@@ -63,6 +63,7 @@ export default function TerminalView({ sessionId, title, visible = true, onBack 
   const fallbackInputRef = useRef<HTMLTextAreaElement | null>(null);
   const keyboardInputRef = useRef<HTMLTextAreaElement | null>(null);
   const terminalDragRef = useRef<TerminalDragState | null>(null);
+  const mobileKeyboardResetPendingRef = useRef(false);
   const voiceHoldActiveRef = useRef(false);
   const voiceHoldCancelledRef = useRef(false);
   const voiceHoldFailedRef = useRef(false);
@@ -94,6 +95,7 @@ export default function TerminalView({ sessionId, title, visible = true, onBack 
     setInterimTranscript('');
     setFallbackOpen(false);
     setFallbackValue('');
+    mobileKeyboardResetPendingRef.current = false;
     setVoiceState(speechAvailable ? 'idle' : 'unavailable');
     setVoiceMessage(speechAvailable ? '按住按钮后开始语音输入。' : unavailableSpeechMessage);
 
@@ -522,20 +524,28 @@ export default function TerminalView({ sessionId, title, visible = true, onBack 
     closeFallbackInput();
   }
 
+  function sendMobileKeyboardInput(data: string) {
+    const socket = socketRef.current;
+    if (!attachedRef.current || !socket || socket.readyState !== WebSocket.OPEN) return;
+    const resetMode = mobileKeyboardResetPendingRef.current;
+    mobileKeyboardResetPendingRef.current = false;
+    sendTerminalMessage(socket, { type: 'input', sessionId, data, source: 'mobile-keyboard', resetMode }, setStatusMessage);
+  }
+
   function handleKeyboardBeforeInput(event: InputEvent) {
     const input = keyboardInputRef.current;
     if (!input) return;
 
     if (event.inputType === 'deleteContentBackward') {
       event.preventDefault();
-      sendInput('\x7f');
+      sendMobileKeyboardInput('\x7f');
       input.value = '';
       return;
     }
 
     if (event.inputType === 'insertLineBreak') {
       event.preventDefault();
-      sendInput('\r');
+      sendMobileKeyboardInput('\r');
       input.value = '';
     }
   }
@@ -543,25 +553,26 @@ export default function TerminalView({ sessionId, title, visible = true, onBack 
   function handleKeyboardInput(input: HTMLTextAreaElement) {
     const value = input.value;
     if (!value) return;
-    sendInput(value.replace(/\n/g, '\r'));
+    sendMobileKeyboardInput(value.replace(/\n/g, '\r'));
     input.value = '';
   }
 
   function handleKeyboardKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
     if (event.key === 'Enter') {
       event.preventDefault();
-      sendInput('\r');
+      sendMobileKeyboardInput('\r');
       event.currentTarget.value = '';
       return;
     }
 
     if (event.key === 'Backspace' && event.currentTarget.value === '') {
       event.preventDefault();
-      sendInput('\x7f');
+      sendMobileKeyboardInput('\x7f');
     }
   }
 
   function focusTerminalKeyboard() {
+    mobileKeyboardResetPendingRef.current = true;
     terminalRef.current?.focus();
     keyboardInputRef.current?.focus({ preventScroll: true });
   }

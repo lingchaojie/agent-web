@@ -15,6 +15,8 @@ const terminalClientMessageSchema = z.discriminatedUnion('type', [
     type: z.literal('input'),
     sessionId: z.string().min(1),
     data: z.string(),
+    source: z.enum(['terminal', 'mobile-keyboard']).optional(),
+    resetMode: z.boolean().optional(),
   }),
   z.object({
     type: z.literal('resize'),
@@ -84,7 +86,8 @@ export function registerTerminalRoutes(app: FastifyInstance, context: RouteConte
         }
 
         if (message.type === 'input') {
-          activeAttach.sendInput(message.data);
+          if (message.source || message.resetMode) activeAttach.sendInput(message.data, { source: message.source, resetMode: message.resetMode });
+          else activeAttach.sendInput(message.data);
           return;
         }
 
