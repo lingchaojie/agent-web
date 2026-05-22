@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { type KeyboardEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
@@ -61,6 +61,7 @@ export default function TerminalView({ sessionId, title, visible = true, onBack 
   const speechSessionRef = useRef<SpeechRecognitionSession | null>(null);
   const voiceButtonRef = useRef<HTMLButtonElement | null>(null);
   const fallbackInputRef = useRef<HTMLTextAreaElement | null>(null);
+  const keyboardInputRef = useRef<HTMLTextAreaElement | null>(null);
   const terminalDragRef = useRef<TerminalDragState | null>(null);
   const voiceHoldActiveRef = useRef(false);
   const voiceHoldCancelledRef = useRef(false);
@@ -107,7 +108,7 @@ export default function TerminalView({ sessionId, title, visible = true, onBack 
 
     terminal.loadAddon(fitAddon);
     terminal.open(terminalHost);
-    terminal.focus();
+    focusTerminalKeyboard();
     fitTerminal(fitAddon);
 
     const isActiveSocket = () => active && socketRef.current === socket;
@@ -153,7 +154,7 @@ export default function TerminalView({ sessionId, title, visible = true, onBack 
       setIsAttached(message.status === 'attached');
       setStatus(message.status);
       setStatusMessage(message.message ?? defaultStatusMessage(message.status));
-      if (message.status === 'attached') terminal.focus();
+      if (message.status === 'attached') focusTerminalKeyboard();
     });
 
     socket.addEventListener('error', () => {
@@ -206,7 +207,7 @@ export default function TerminalView({ sessionId, title, visible = true, onBack 
       if (!fitAddon) return;
       fitTerminal(fitAddon);
       if (attachedRef.current) sendResize();
-      terminalRef.current?.focus();
+      focusTerminalKeyboard();
     });
     return () => cancelAnimationFrame(frame);
   }, [visible]);
@@ -345,12 +346,12 @@ export default function TerminalView({ sessionId, title, visible = true, onBack 
     const terminal = terminalRef.current;
     if (key.scrollToBottom) {
       terminal?.scrollToBottom();
-      terminal?.focus();
+      focusTerminalKeyboard();
       return;
     }
     if (typeof key.scrollPages === 'number') {
       terminal?.scrollPages(key.scrollPages);
-      terminal?.focus();
+      focusTerminalKeyboard();
       return;
     }
     if (key.data) sendInput(key.data);
@@ -395,7 +396,7 @@ export default function TerminalView({ sessionId, title, visible = true, onBack 
 
     if (finalText) {
       sendInput(finalText);
-      terminalRef.current?.focus();
+      focusTerminalKeyboard();
       setVoiceState(speechAvailable ? 'idle' : 'unavailable');
       setVoiceMessage('语音内容已插入终端。');
       return;
@@ -508,7 +509,7 @@ export default function TerminalView({ sessionId, title, visible = true, onBack 
   function closeFallbackInput() {
     setFallbackOpen(false);
     setFallbackValue('');
-    terminalRef.current?.focus();
+    focusTerminalKeyboard();
   }
 
   function insertFallbackInput() {
@@ -519,6 +520,50 @@ export default function TerminalView({ sessionId, title, visible = true, onBack 
     sendInput(text);
     setVoiceMessage('文本已插入终端。');
     closeFallbackInput();
+  }
+
+  function handleKeyboardBeforeInput(event: InputEvent) {
+    const input = keyboardInputRef.current;
+    if (!input) return;
+
+    if (event.inputType === 'deleteContentBackward') {
+      event.preventDefault();
+      sendInput('\x7f');
+      input.value = '';
+      return;
+    }
+
+    if (event.inputType === 'insertLineBreak') {
+      event.preventDefault();
+      sendInput('\r');
+      input.value = '';
+    }
+  }
+
+  function handleKeyboardInput(input: HTMLTextAreaElement) {
+    const value = input.value;
+    if (!value) return;
+    sendInput(value.replace(/\n/g, '\r'));
+    input.value = '';
+  }
+
+  function handleKeyboardKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      sendInput('\r');
+      event.currentTarget.value = '';
+      return;
+    }
+
+    if (event.key === 'Backspace' && event.currentTarget.value === '') {
+      event.preventDefault();
+      sendInput('\x7f');
+    }
+  }
+
+  function focusTerminalKeyboard() {
+    terminalRef.current?.focus();
+    keyboardInputRef.current?.focus({ preventScroll: true });
   }
 
   function sendInput(data: string) {
@@ -537,7 +582,7 @@ export default function TerminalView({ sessionId, title, visible = true, onBack 
   }
 
   return (
-    <section className="panel terminal-panel terminal-view" aria-label="Claude Code terminal" onClick={() => terminalRef.current?.focus()}>
+    <section className="panel terminal-panel terminal-view" aria-label="Claude Code terminal" onClick={focusTerminalKeyboard}>
       <div className="mobile-panel-nav">
         <button className="secondary-button compact" type="button" onClick={onBack}>
           ← 会话
@@ -561,6 +606,20 @@ export default function TerminalView({ sessionId, title, visible = true, onBack 
         ref={terminalContainerRef}
       >
         <div className="terminal-xterm-host" ref={terminalHostRef} />
+        <textarea
+          aria-label="手机终端键盘输入"
+          autoCapitalize="off"
+          autoComplete="off"
+          autoCorrect="off"
+          className="terminal-keyboard-input"
+          inputMode="text"
+          onBeforeInput={(event) => handleKeyboardBeforeInput(event.nativeEvent)}
+          onInput={(event) => handleKeyboardInput(event.currentTarget)}
+          onKeyDown={handleKeyboardKeyDown}
+          ref={keyboardInputRef}
+          rows={1}
+          spellCheck={false}
+        />
       </div>
 
       <div className="terminal-voice-panel" data-voice-state={voiceState} data-fallback-open={fallbackOpen ? 'true' : 'false'}>

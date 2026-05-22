@@ -610,9 +610,9 @@ describe('TerminalView', () => {
     expect(sendTerminalWs).not.toHaveBeenCalled();
   });
 
-  it('keeps xterm direct keyboard input stable on mobile', async () => {
-    render(<TerminalView sessionId="session-1" title="Claude shell" onBack={vi.fn()} />);
-    const terminal = xtermMocks.terminalInstances[0];
+  it('streams direct phone keyboard text through the terminal input layer', async () => {
+    const { container } = render(<TerminalView sessionId="session-1" title="Claude shell" onBack={vi.fn()} />);
+    const keyboard = screen.getByRole('textbox', { name: '手机终端键盘输入' }) as HTMLTextAreaElement;
 
     await act(async () => {
       socket.open();
@@ -620,16 +620,31 @@ describe('TerminalView', () => {
     });
     vi.mocked(sendTerminalWs).mockClear();
 
-    terminal.emitData('/help');
+    fireEvent.click(container.querySelector('.terminal-container') as HTMLDivElement);
+    expect(keyboard).toHaveFocus();
+
+    await act(async () => {
+      fireEvent.input(keyboard, { target: { value: '/help' } });
+    });
+    await act(async () => {
+      fireEvent.keyDown(keyboard, { key: 'Enter' });
+    });
+    await act(async () => {
+      fireEvent.keyDown(keyboard, { key: 'Backspace' });
+    });
 
     expect(sendTerminalWs).toHaveBeenCalledWith(socket, { type: 'input', sessionId: 'session-1', data: '/help' });
+    expect(sendTerminalWs).toHaveBeenCalledWith(socket, { type: 'input', sessionId: 'session-1', data: '\r' });
+    expect(sendTerminalWs).toHaveBeenCalledWith(socket, { type: 'input', sessionId: 'session-1', data: '\x7f' });
+    expect(keyboard).toHaveValue('');
   });
 
-  it('keeps the xterm keyboard textarea inside the terminal on mobile', () => {
+  it('keeps the phone keyboard input layer anchored inside the terminal on mobile', () => {
     const styles = readFileSync(stylesPath, 'utf8');
 
-    expect(styles).toMatch(/\.terminal-container\s*\{[^}]*touch-action:\s*pan-x\s*;/s);
-    expect(styles).toMatch(/\.terminal-xterm-host \.xterm \.xterm-helper-textarea\s*\{[^}]*left:\s*0\s*!important;[^}]*top:\s*0\s*!important;[^}]*width:\s*1px\s*!important;[^}]*height:\s*1px\s*!important;[^}]*min-height:\s*1px\s*!important;[^}]*padding:\s*0\s*!important;[^}]*box-shadow:\s*none\s*!important;/s);
+    expect(styles).toMatch(/\.terminal-container\s*\{[^}]*position:\s*relative\s*;[^}]*touch-action:\s*pan-x\s*;/s);
+    expect(styles).toMatch(/\.terminal-keyboard-input\s*\{[^}]*position:\s*absolute;[^}]*z-index:\s*2;[^}]*opacity:\s*0\.01;/s);
+    expect(styles).toMatch(/\.terminal-xterm-host \.xterm \.xterm-helper-textarea,[\s\S]*?\.terminal-keyboard-input\s*\{[^}]*left:\s*0\s*!important;[^}]*top:\s*0\s*!important;[^}]*width:\s*1px\s*!important;[^}]*height:\s*1px\s*!important;[^}]*min-height:\s*1px\s*!important;[^}]*padding:\s*0\s*!important;[^}]*box-shadow:\s*none\s*!important;/s);
   });
 
   it('keeps voice status in the shrinkable final track when the fallback panel is closed', () => {

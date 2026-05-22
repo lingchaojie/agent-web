@@ -618,6 +618,7 @@ textarea:focus {
 }
 
 .terminal-container {
+  position: relative;
   min-width: 0;
   width: 100%;
   min-height: 0;
@@ -655,7 +656,8 @@ textarea:focus {
   overflow-y: hidden !important;
 }
 
-.terminal-xterm-host .xterm .xterm-helper-textarea {
+.terminal-xterm-host .xterm .xterm-helper-textarea,
+.terminal-keyboard-input {
   left: 0 !important;
   top: 0 !important;
   width: 1px !important;
@@ -666,7 +668,15 @@ textarea:focus {
   outline: 0 !important;
   box-shadow: none !important;
   resize: none !important;
-  z-index: 1 !important;
+}
+
+.terminal-keyboard-input {
+  position: absolute;
+  z-index: 2;
+  color: transparent;
+  background: transparent;
+  caret-color: transparent;
+  opacity: 0.01;
 }
 
 .terminal-shortcut-bar {
